@@ -1,0 +1,5 @@
+cfg/sensors/
+*.bak
+__pycache__/
+*.pyc
+.env
