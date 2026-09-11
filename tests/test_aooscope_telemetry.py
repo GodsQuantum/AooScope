@@ -166,6 +166,37 @@ class AooScopeTelemetryTests(unittest.TestCase):
             self.assertIn("aooscope_hardware_cpu_temp_c: 61.5", sensor.read_text())
             self.assertFalse(Path(str(state_file) + ".tmp").exists())
 
+    def test_settings_pve_can_fallback_to_mounted_token_file(self):
+        import os
+        from unittest.mock import patch
+        from aooscope.telemetry import build_runtime_collector_from_settings
+        settings={"providers":{"proxmox":{"enabled":True,"url":"https://pve.lan:8006","node":"pve","verify_tls":True}}}
+        with tempfile.TemporaryDirectory() as td:
+            token=Path(td,"token.json")
+            token.write_text(json.dumps({"full-tokenid":"display@pve!lcd","value":"secret"}))
+            with patch.dict(os.environ,{"PVE_TOKEN_FILE":str(token)},clear=False):
+                collector=build_runtime_collector_from_settings(settings,{})
+            self.assertIsNotNone(collector.pve_client)
+            self.assertEqual(collector.pve_client.token_id,"display@pve!lcd")
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AooScopeTelemetrySettingsTests(unittest.TestCase):
+    def test_build_runtime_collector_from_settings_uses_admin_config(self):
+        from aooscope.telemetry import build_runtime_collector_from_settings
+        settings = {"providers": {
+            "proxmox": {"enabled": True, "url": "pve:8006", "node": "node-a", "verify_tls": False},
+            "jellyfin": {"enabled": True, "url": "media:8096", "verify_tls": True},
+        }}
+        secrets = {
+            "proxmox": {"api_token": "display@pve!lcd=secret"},
+            "jellyfin": {"api_key": "jelly-secret"},
+        }
+        collector = build_runtime_collector_from_settings(settings, secrets)
+        self.assertEqual(collector.pve_node, "node-a")
+        self.assertEqual(collector.pve_client.token_id, "display@pve!lcd")
+        self.assertEqual(collector.pve_client.token_secret, "secret")
+        self.assertIn("jellyfin", collector.media_clients)

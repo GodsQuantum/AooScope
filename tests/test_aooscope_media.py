@@ -158,3 +158,19 @@ class AooScopeMediaTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AooScopeMediaSettingsTests(unittest.TestCase):
+    def test_build_media_clients_from_settings_uses_saved_secrets(self):
+        from aooscope.media import build_media_clients_from_settings
+        settings = {"providers": {
+            "jellyfin": {"enabled": True, "url": "http://media:8096", "verify_tls": True},
+            "radarr": {"enabled": True, "url": "radarr:7878", "verify_tls": False},
+            "qbittorrent": {"enabled": False, "url": "qbit:8080"},
+        }}
+        secrets = {"jellyfin": {"api_key": "j-key"}, "radarr": {"api_key": "r-key"}}
+        clients = build_media_clients_from_settings(settings, secrets)
+        self.assertEqual(clients["jellyfin"].headers["X-Emby-Token"], "j-key")
+        self.assertEqual(clients["radarr"].headers["X-Api-Key"], "r-key")
+        self.assertFalse(clients["radarr"].verify_tls)
+        self.assertNotIn("qbittorrent", clients)

@@ -41,6 +41,28 @@ class AooScopePanelTests(unittest.TestCase):
         for index in range(6):
             self.assertIn(f'aooscope_pve_disks_{index}_name', labels)
 
+
+    def test_home_uses_circular_visual_gauges(self):
+        home = next(p for p in build_monitor_config()['diy'] if p['id'] == 'home')
+        gauges = {s['label']: s for s in home['sensor'] if s['mode'] == 2}
+        self.assertIn('aooscope_pve_cpu_pct', gauges)
+        self.assertIn('aooscope_pve_memory_pct', gauges)
+        self.assertIn('aooscope_hardware_cpu_temp_c', gauges)
+        self.assertTrue(all(g['pic'].startswith('aooscope/gauge_') for g in gauges.values()))
+
+    def test_compute_uses_circular_visual_gauges(self):
+        compute = next(p for p in build_monitor_config()['diy'] if p['id'] == 'compute')
+        gauges = {s['label']: s for s in compute['sensor'] if s['mode'] == 2}
+        self.assertIn('aooscope_hardware_gpu_busy_pct', gauges)
+        self.assertIn('aooscope_pve_cpu_pct', gauges)
+        self.assertIn('aooscope_hardware_gpu_gtt_pct', gauges)
+
+    def test_storage_uses_temperature_visual_bars(self):
+        storage = next(p for p in build_monitor_config()['diy'] if p['id'] == 'storage')
+        bars = [s for s in storage['sensor'] if s['mode'] == 3]
+        self.assertEqual(len(bars), 6)
+        self.assertTrue(all(s['pic'] == 'aooscope/temp_bar.png' for s in bars))
+
     def test_every_sensor_has_aoostar_compat_value_field(self):
         cfg = build_monitor_config(media_active=True)
         for panel in cfg['diy']:
