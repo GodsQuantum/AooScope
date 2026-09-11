@@ -15,15 +15,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libudev1 python3 python3-pil python3-flask python3-flask-cors \
     iproute2 procps tini \
     && rm -rf /var/lib/apt/lists/*
-RUN mkdir -p /app/cfg/sensors
+RUN mkdir -p /app/cfg/sensors /run/aooscope-secrets
 COPY --from=builder /out/asterctl /usr/local/bin/asterctl
 COPY --from=builder /out/aster-sysinfo /usr/local/bin/aster-sysinfo
 COPY --from=builder /src/aoostar-rs/fonts/ /app/fonts/
 COPY cfg/ /app/cfg/
-COPY webui.py proxmox-sensors.sh start.sh /app/
-COPY cloud9_telemetry.py /app/
-RUN chmod 0755 /app/start.sh /app/proxmox-sensors.sh
+COPY aooscope/ /app/aooscope/
+COPY webui.py start.sh /app/
+RUN chmod 0755 /app/start.sh
 WORKDIR /app
+ENV PYTHONPATH=/app PYTHONUNBUFFERED=1
 EXPOSE 8765
 ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
 CMD ["/app/start.sh"]

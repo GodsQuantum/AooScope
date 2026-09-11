@@ -1,5 +1,10 @@
-cfg/sensors/
-*.bak
+.env
+.env.*
+!.env.example
+data/
+secrets/
+*.local.toml
+*.local.json
 __pycache__/
 *.pyc
-.env
+out/
