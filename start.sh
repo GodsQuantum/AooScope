@@ -1,42 +1,39 @@
 #!/bin/bash
-# Script de démarrage de tous les services AOOSTAR LCD
+set -u
 
-echo "=== AOOSTAR LCD Manager ==="
+echo "=== AOOSTAR LCD Manager / Cloud 9 V2 ==="
 echo "Démarrage des services..."
 
-# Vérifier que le device USB est présent
 if [ ! -e /dev/ttyACM0 ]; then
-    echo "⚠️  /dev/ttyACM0 non trouvé - l'écran ne sera pas contrôlé"
+    echo "⚠️ /dev/ttyACM0 non trouvé - l'écran ne sera pas contrôlé"
 fi
 
-# Démarrer aster-sysinfo en arrière-plan
+python3 /app/cloud9_telemetry.py &
+echo "✅ cloud9-telemetry démarré"
+
 aster-sysinfo --refresh 5 \
-    -o /app/cfg/sensors/values.txt \
+    -o /app/cfg/sensors/sysinfo.txt \
     --temp-dir /app/cfg/sensors/ &
 echo "✅ aster-sysinfo démarré"
 
-# Attendre que le fichier de valeurs soit créé
 sleep 3
 
-# Le helper Proxmox historique ne fonctionne que sur un hôte PVE natif.
-# Dans une LXC, ne pas publier de fausses métriques (VM/LXC=0, mauvais réseau).
+# Helper historique conservé uniquement pour compatibilité native PVE.
 if command -v qm >/dev/null 2>&1 && command -v pct >/dev/null 2>&1 && [ -d /sys/class/net/vmbr0 ]; then
     bash /app/proxmox-sensors.sh &
     echo "✅ proxmox-sensors démarré"
 else
-    echo "ℹ️ proxmox-sensors ignoré: métriques hôte non disponibles dans cette LXC"
+    echo "ℹ️ proxmox-sensors ignoré: Cloud 9 V2 utilise les sources CT130/API"
 fi
-
-# Démarrer asterctl en arrière-plan
 if [ -e /dev/ttyACM0 ]; then
     asterctl \
         --config-dir /app/cfg \
         --config monitor.json \
-        --sensor-path /app/cfg/sensors/values.txt \
+        --font-dir /app/fonts \
+        --sensor-path /app/cfg/sensors/ \
         --sensor-mapping /app/cfg/sensor-mapping.cfg &
     echo "✅ asterctl démarré"
 fi
 
-# Démarrer le webui en premier plan (pour garder le container actif)
 echo "✅ Démarrage du webui sur port 8765..."
 python3 /app/webui.py
