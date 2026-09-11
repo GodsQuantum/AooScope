@@ -18,9 +18,14 @@ echo "✅ aster-sysinfo démarré"
 # Attendre que le fichier de valeurs soit créé
 sleep 3
 
-# Démarrer proxmox-sensors en arrière-plan
-bash /app/proxmox-sensors.sh &
-echo "✅ proxmox-sensors démarré"
+# Le helper Proxmox historique ne fonctionne que sur un hôte PVE natif.
+# Dans une LXC, ne pas publier de fausses métriques (VM/LXC=0, mauvais réseau).
+if command -v qm >/dev/null 2>&1 && command -v pct >/dev/null 2>&1 && [ -d /sys/class/net/vmbr0 ]; then
+    bash /app/proxmox-sensors.sh &
+    echo "✅ proxmox-sensors démarré"
+else
+    echo "ℹ️ proxmox-sensors ignoré: métriques hôte non disponibles dans cette LXC"
+fi
 
 # Démarrer asterctl en arrière-plan
 if [ -e /dev/ttyACM0 ]; then

@@ -1,19 +1,27 @@
-version: '3.8'
-
+name: aoostar-lcd
 services:
   aoostar-lcd:
-    build: .
+    build:
+      context: /srv/lxc/administration/data/repos/aoostar-proxmox-lcd
+    image: local/aoostar-lcd:cloud9
     container_name: aoostar-lcd
-    restart: always
+    restart: unless-stopped
     ports:
-      - "8765:8765"
+      - "192.168.1.212:8765:8765"
     devices:
-      - /dev/ttyACM0:/dev/ttyACM0
+      - "/dev/ttyACM0:/dev/ttyACM0"
     volumes:
-      - ./cfg:/app/cfg
-      - ./webui.py:/app/webui.py
-      - ./proxmox-sensors.sh:/app/proxmox-sensors.sh
-    network_mode: host
-    privileged: false
+      - "/srv/lxc/administration/appdata/aoostar-lcd/cfg:/app/cfg"
     environment:
-      - PYTHONUNBUFFERED=1
+      PYTHONUNBUFFERED: "1"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/', timeout=3).read(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"

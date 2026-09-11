@@ -1,6 +1,6 @@
 #!/bin/bash
-PROXFILE="/root/aoostar-rs/cfg/sensors/proxmox.txt"
-OUT="/root/aoostar-rs/cfg/sensors/values.txt"
+PROXFILE="/app/cfg/sensors/proxmox.txt"
+OUT="/app/cfg/sensors/values.txt"
 while true; do
   VM_COUNT=$(qm list 2>/dev/null | grep -c running || echo 0)
   LXC_COUNT=$(pct list 2>/dev/null | grep -c running || echo 0)
