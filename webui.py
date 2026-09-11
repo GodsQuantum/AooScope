@@ -1,702 +1,253 @@
-# -*- coding: utf-8 -*-
-from flask import Flask, request, jsonify, Response, send_from_directory
-import json, subprocess, os, base64
-from PIL import Image
-import io
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
 
-app = Flask(__name__)
-try:
-    from flask_cors import CORS
-    CORS(app)
-except:
-    pass
+from flask import Flask, jsonify, request, Response
 
-CONFIG = '/app/cfg/monitor.json'
-IMG_DIR = '/app/cfg'
+from aooscope.settings import (
+    PROVIDER_DEFAULTS,
+    effective_brightness,
+    load_secrets,
+    load_settings,
+    public_settings,
+    save_settings,
+)
 
-HTML = """<!DOCTYPE html>
-<html>
+APP_VERSION = "0.1.1"
+
+
+def _json_safe_result(result, secrets):
+    text = json.dumps(result or {}, ensure_ascii=False)
+    for bucket in (secrets or {}).values():
+        for value in (bucket or {}).values():
+            if value:
+                text = text.replace(str(value), "***")
+    return json.loads(text)
+
+
+def _external_provider_secrets():
+    out = {}
+    token_file = os.getenv("PVE_TOKEN_FILE")
+    if token_file:
+        try:
+            data = json.loads(Path(token_file).read_text(encoding="utf-8"))
+            if data.get("full-tokenid") and data.get("value"):
+                out["proxmox"] = {"api_token": f"{data['full-tokenid']}={data['value']}"}
+        except (OSError, json.JSONDecodeError):
+            pass
+    for name, env_name in (("jellyfin","JELLYFIN_API_KEY_FILE"),("silo","SILO_API_KEY_FILE"),("radarr","RADARR_API_KEY_FILE")):
+        path = os.getenv(env_name)
+        if not path:
+            continue
+        try:
+            value = Path(path).read_text(encoding="utf-8").strip()
+        except OSError:
+            value = ""
+        if value:
+            out[name] = {"api_key": value}
+    return out
+
+
+def _merge_external_secrets(saved):
+    merged = {k: dict(v or {}) for k, v in (saved or {}).items()}
+    for name, values in _external_provider_secrets().items():
+        bucket = merged.setdefault(name, {})
+        for key, value in values.items():
+            bucket.setdefault(key, value)
+    return merged
+
+
+def create_app(config_dir=None, provider_tester=None):
+    root = Path(config_dir or os.getenv("AOOSCOPE_CONFIG_DIR_IN_CONTAINER", "/app/cfg"))
+    settings_path = root / "settings.json"
+    secrets_path = root / "private" / "providers.json"
+    state_path = root / "state.json"
+    device = os.getenv("AOOSCOPE_DEVICE", "/dev/ttyACM0")
+    app = Flask(__name__)
+
+    @app.after_request
+    def disable_browser_cache(response):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+    if provider_tester is None:
+        from aooscope.providers import test_provider as provider_tester
+
+    @app.get("/")
+    def index():
+        return Response(ADMIN_HTML, mimetype="text/html; charset=utf-8")
+
+    @app.get("/api/settings")
+    def get_settings():
+        settings = load_settings(settings_path)
+        secrets = _merge_external_secrets(load_secrets(secrets_path))
+        return jsonify(public_settings(settings, secrets))
+
+    @app.put("/api/settings")
+    def put_settings():
+        payload = request.get_json(silent=True) or {}
+        settings = save_settings(payload, settings_path, secrets_path)
+        return jsonify(public_settings(settings, _merge_external_secrets(load_secrets(secrets_path))))
+
+    @app.post("/api/providers/<name>/test")
+    def test_provider_route(name):
+        if name not in PROVIDER_DEFAULTS:
+            return jsonify({"ok": False, "message": "Unknown provider"}), 404
+        settings = load_settings(settings_path)
+        secrets = _merge_external_secrets(load_secrets(secrets_path))
+        provider = settings["providers"].get(name, {})
+        try:
+            result = provider_tester(name, provider, secrets.get(name, {}))
+        except Exception as exc:
+            result = {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
+        return jsonify(_json_safe_result(result, secrets))
+
+    @app.get("/api/status")
+    def get_status():
+        settings = load_settings(settings_path)
+        state = {}
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        return jsonify({
+            "version": APP_VERSION,
+            "brightness": effective_brightness(settings),
+            "native_brightness": False,
+            "device_present": Path(device).exists(),
+            "updated_unix": ((state.get("meta") or {}).get("updated_unix")),
+        })
+
+    @app.get("/api/health")
+    def health():
+        return jsonify({"ok": True, "version": APP_VERSION})
+
+    return app
+
+
+ADMIN_HTML = r"""<!doctype html>
+<html lang="en">
 <head>
-<title>AOOSTAR Screen Editor v2</title>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AooScope Admin</title>
 <style>
-* { box-sizing: border-box; }
-body { font-family: Arial; background: #0d1117; color: #e6edf3; margin: 0; padding: 15px; }
-h1 { color: #58a6ff; text-align: center; margin: 0 0 10px; }
-.toolbar { display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; margin-bottom: 10px; padding: 10px; background: #161b22; border-radius: 8px; }
-.btn { background: #21262d; border: 1px solid #30363d; color: #e6edf3; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
-.btn:hover { background: #30363d; }
-.btn.active { background: #1f6feb; border-color: #388bfd; }
-.btn-green { background: #238636; border-color: #2ea043; }
-.btn-green:hover { background: #2ea043; }
-.btn-blue { background: #1f6feb; border-color: #388bfd; }
-.btn-blue:hover { background: #388bfd; }
-.btn-orange { background: #9e6a03; border-color: #d29922; }
-.btn-orange:hover { background: #d29922; }
-.btn-red { background: #da3633; border-color: #f85149; padding: 4px 10px; }
-.btn-red:hover { background: #f85149; }
-.btn-purple { background: #6e40c9; border-color: #a371f7; }
-.btn-purple:hover { background: #a371f7; }
-.status { text-align: center; padding: 8px; border-radius: 6px; margin: 5px 0; font-weight: bold; }
-.ok { background: #1a4f2a; color: #56d364; }
-.err { background: #4a1515; color: #f85149; }
-.preview-wrap { position: relative; margin: 10px auto; width: 960px; }
-.preview { background: #000; width: 960px; height: 376px; position: relative; border: 2px solid #30363d; border-radius: 8px; overflow: hidden; }
-.preview-item { position: absolute; color: white; font-weight: bold; transform: translate(-50%, -50%); background: rgba(255,255,255,0.15); padding: 2px 6px; border-radius: 4px; cursor: grab; font-size: 11px; white-space: nowrap; border: 1px solid rgba(255,255,255,0.3); user-select: none; }
-.preview-item.dragging { cursor: grabbing; background: rgba(88,166,255,0.6); outline: 2px dashed #58a6ff; z-index: 10; }
-.grid-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0.1; }
-.snap-indicator { position: absolute; background: rgba(88,166,255,0.8); pointer-events: none; z-index: 20; }
-.preview-item:hover { background: rgba(88,166,255,0.4); outline: 2px solid #58a6ff; }
-.preview-item.selected { background: rgba(88,166,255,0.5); outline: 2px solid #58a6ff; }
-.labels-wrap { background: #161b22; padding: 8px; border-radius: 6px; margin: 8px 0; max-height: 100px; overflow-y: auto; }
-.label-tag { display: inline-block; background: #21262d; padding: 2px 7px; border-radius: 4px; margin: 2px; cursor: pointer; border: 1px solid #30363d; font-size: 11px; }
-.label-tag:hover { background: #1f6feb; }
-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
-th { background: #161b22; padding: 8px; text-align: left; border: 1px solid #30363d; color: #58a6ff; position: sticky; top: 0; }
-td { padding: 5px; border: 1px solid #21262d; }
-tr:hover td { background: #161b22; }
-tr.selected-row td { background: #1a2a4a; }
-input[type=text], input[type=number] { background: #21262d; border: 1px solid #30363d; color: #e6edf3; padding: 3px 6px; border-radius: 4px; width: 100%; }
-input[type=color] { width: 40px; height: 28px; padding: 0; border: none; border-radius: 4px; cursor: pointer; background: none; }
-.section-title { color: #8b949e; font-size: 12px; font-weight: bold; margin: 5px 0 3px; }
-.modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: center; }
-.modal.show { display: flex; }
-.modal-box { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; min-width: 400px; max-width: 600px; }
-.modal-box h3 { color: #58a6ff; margin: 0 0 15px; }
-.modal-box input { width: 100%; margin: 5px 0 10px; }
-.fullscreen { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; z-index: 200; display: flex; align-items: center; justify-content: center; }
-.fullscreen img { max-width: 100%; max-height: 100%; }
-.fullscreen-close { position: fixed; top: 20px; right: 20px; z-index: 201; background: rgba(0,0,0,0.7); border: 1px solid #fff; color: #fff; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 16px; }
-.badge { display: inline-block; background: #1f6feb; color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 11px; margin-left: 4px; }
+:root{color-scheme:dark;--bg:#071019;--card:#101d2a;--line:#294158;--text:#f4f8fc;--muted:#93a8bc;--cyan:#35d9ff;--green:#58e5a4;--amber:#ffc35d;--red:#ff6375}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#10263a 0,#071019 42%);font-family:Inter,system-ui,sans-serif;color:var(--text)}
+main{max-width:1120px;margin:auto;padding:30px 20px 60px}.hero{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:22px}
+h1{font-size:34px;margin:0}.sub{color:var(--muted);margin-top:5px}.pill{border:1px solid var(--line);padding:8px 12px;border-radius:999px;color:var(--cyan)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}.card{background:rgba(16,29,42,.96);border:1px solid var(--line);border-radius:18px;padding:18px}
+.card h2,.card h3{margin:0 0 14px}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field{margin:11px 0}label{display:block;color:var(--muted);font-size:13px;margin-bottom:6px}
+input,select{width:100%;border:1px solid #35516d;background:#0b1723;color:var(--text);border-radius:10px;padding:10px 11px;font:inherit}input[type=range]{padding:0}
+.toggle{display:flex;align-items:center;gap:9px}.toggle input{width:auto}.btn{border:1px solid #3a5b78;background:#12283b;color:var(--text);padding:9px 14px;border-radius:10px;cursor:pointer;font-weight:700}
+.btn.primary{background:#0f83aa;border-color:#22c8ef}.btn:hover{filter:brightness(1.12)}.status{font-size:13px;color:var(--muted);min-height:18px}.ok{color:var(--green)}.bad{color:var(--red)}
+.provider{position:relative}.provider .head{display:flex;justify-content:space-between;align-items:center;gap:10px}.secret-note{font-size:12px;color:var(--muted)}
+.schedule-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin:8px 0}.footerbar{display:flex;gap:12px;align-items:center;margin-top:18px;position:sticky;bottom:12px;background:#0b1620dd;border:1px solid var(--line);padding:12px;border-radius:14px;backdrop-filter:blur(12px)}
+@media(max-width:640px){.row,.schedule-row{grid-template-columns:1fr}.hero{align-items:flex-start;flex-direction:column}}
 </style>
 </head>
-<body>
-<h1>AOOSTAR Screen Editor <span class="badge">v2</span></h1>
-<div id="status"></div>
-
-<div class="toolbar">
-  <strong>Panneau:</strong>
-  <span id="panel-btns"></span>
-  <button class="btn btn-blue" id="btn-add-panel">+ Panneau</button>
-  <button class="btn btn-green" id="btn-save">Sauvegarder</button>
-  <button class="btn btn-orange" id="btn-undo" title="Ctrl+Z">Annuler</button>
-  <button class="btn btn-purple" id="btn-fullscreen">Plein ecran</button>
-  <button class="btn" id="btn-export">Export JSON</button>
-  <label class="btn" style="cursor:pointer">Import JSON<input type="file" id="import-file" accept=".json" style="display:none"></label>
+<body><main>
+<div class="hero"><div><h1>AooScope</h1><div class="sub">Smart LCD dashboard for AOOSTAR systems</div></div><div id="device" class="pill">Display …</div></div>
+<div class="grid">
+<section class="card"><h2>🖥️ Display</h2>
+<div class="row"><div class="field"><label>Brand</label><input id="brand" maxlength="32"></div><div class="field"><label>Timezone</label><input id="timezone" placeholder="Europe/Paris"></div></div>
+<div class="field"><label>Brightness <strong id="brightnessLabel">100%</strong></label><input id="brightness" type="range" min="0" max="100"></div>
+<div class="secret-note">Software luminance. Native WTR MAX backlight control is not exposed by the known protocol.</div>
+<div id="displayLive" class="status">Checking LCD…</div>
+<div class="row"><div class="field"><label>Carousel interval (s)</label><input id="switchSeconds" type="number" min="2" max="120"></div><div class="field toggle"><input id="scheduleEnabled" type="checkbox"><label for="scheduleEnabled">Brightness schedule</label></div></div>
+<div id="schedule"></div><button class="btn" id="addSchedule">+ Schedule</button>
+</section>
+<section class="card"><h2>📡 Providers</h2><div class="sub">Connect services by URL or IP:port. Secrets are stored separately and never returned by the API.</div></section>
 </div>
-
-<div class="toolbar">
-  <strong>Image fond:</strong>
-  <label class="btn btn-blue" style="cursor:pointer">
-    Uploader image
-    <input type="file" id="upload-file" accept="image/*" style="display:none">
-  </label>
-  <span id="current-img" style="color:#8b949e; font-size:13px;"></span>
-  <label style="display:flex;align-items:center;gap:5px;font-size:13px">
-    <input type="checkbox" id="snap-toggle" checked> Snap grille
-  </label>
-  <label style="display:flex;align-items:center;gap:5px;font-size:13px">
-    Grille: <input type="number" id="grid-size" value="10" style="width:50px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:2px 4px;border-radius:4px" min="5" max="50">px
-  </label>
-  <strong style="margin-left:15px">Elements:</strong>
-  <button class="btn btn-green" id="btn-add-element">+ Element</button>
-  <button class="btn" id="btn-duplicate">Dupliquer</button>
-  <button class="btn btn-red" id="btn-delete">Supprimer</button>
-</div>
-
-<div class="toolbar" style="background:#0d1f12;">
-  <strong style="color:#2ea043">Transition panneaux:</strong>
-  <input type="number" id="switch-time" value="3" min="1" max="60" style="width:55px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:4px 6px;border-radius:4px;font-size:14px">
-  <span style="color:#8b949e">secondes</span>
-  <button class="btn btn-green" id="btn-apply-time">Appliquer</button>
-  <span style="width:30px"></span>
-  <button class="btn" id="btn-live-preview" style="background:#0d3b2e;border-color:#2ea043;min-width:160px">&#9654; Live Preview OFF</button>
-  <span style="color:#8b949e;font-size:12px">— affiche les vraies valeurs des capteurs sur l'apercu</span>
-</div>
-
-<div class="preview-wrap">
-  <div class="preview" id="preview">
-    <img id="bg-img" style="position:absolute;width:100%;height:100%;object-fit:cover;" src="">
-  </div>
-</div>
-
-<div class="section-title">Labels disponibles (clic pour copier):</div>
-<div class="labels-wrap" id="labels-list"></div>
-
-<table>
-  <thead>
-    <tr>
-      <th style="width:30px">#</th>
-      <th>Nom</th>
-      <th>Label</th>
-      <th style="width:65px">X</th>
-      <th style="width:65px">Y</th>
-      <th style="width:60px">Taille</th>
-      <th style="width:70px">Couleur</th>
-      <th style="width:60px">Unite</th>
-      <th>Valeur</th>
-      <th style="width:80px">Actions</th>
-    </tr>
-  </thead>
-  <tbody id="table-body"></tbody>
-</table>
-
-<div id="fullscreen-view" class="fullscreen" style="display:none" onclick="hideFullscreen()">
-  <span class="fullscreen-close" id="btn-close-fullscreen">X Fermer</span>
-  <img id="fullscreen-img" src="">
-</div>
-
+<h2 style="margin-top:24px">Providers</h2><div id="providers" class="grid"></div>
+<div class="footerbar"><button class="btn primary" id="save">Save settings</button><span id="saveStatus" class="status"></span></div>
+</main>
 <script>
-var cfg = null;
-var currentPanel = 0;
-var selectedIdx = -1;
-var snapEnabled = true;
-var gridSize = 10;
-var isDragging = false;
-var livePreviewActive = false;
-var livePreviewInterval = null;
-var dragEl = null;
-var dragIdx = -1;
-var dragOffX = 0;
-var dragOffY = 0;
-var undoHistory = [];
-var undoIdx = -1;
-
-function esc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const providerMeta={
+  proxmox:{title:'Proxmox',secrets:['api_token'],extra:['node']},
+  beszel:{title:'Beszel',secrets:['email','password']},
+  jellyfin:{title:'Jellyfin',secrets:['api_key']},
+  silo:{title:'Silo',secrets:['api_key']},
+  radarr:{title:'Radarr',secrets:['api_key']},
+  sonarr:{title:'Sonarr',secrets:['api_key']},
+  qbittorrent:{title:'qBittorrent',secrets:['username','password']},
+  immich:{title:'Immich',secrets:['api_key']},
+  ollama:{title:'Ollama',secrets:[]}
+};
+let settings={};
+let brightnessTimer=null;
+const $=s=>document.querySelector(s);
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function secretLabel(k){return k.replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());}
+function scheduleRow(rule={start:'22:00',end:'08:00',brightness:70}){
+  const div=document.createElement('div');div.className='schedule-row';
+  div.innerHTML=`<input type="time" class="sch-start" value="${esc(rule.start)}"><input type="time" class="sch-end" value="${esc(rule.end)}"><input type="number" class="sch-bright" min="0" max="100" value="${esc(rule.brightness)}"><button class="btn sch-del">×</button>`;
+  div.querySelector('.sch-del').onclick=()=>div.remove();return div;
 }
-
-function colorToHex(c) {
-  if (!c || c === -1 || c === '-1') return '#ffffff';
-  if (typeof c === 'string' && c.startsWith('#')) return c;
-  return '#ffffff';
-}
-
-function hexToColor(h) { return h; }
-
-function toggleSnap(val) { snapEnabled = val; showStatus('Snap ' + (val ? 'actif' : 'desactive'), true); }
-
-function applySwitchTime() {
-  var t = parseInt(document.getElementById('switch-time').value) || 3;
-  if (!cfg.setup) cfg.setup = {};
-  cfg.setup.switchTime = String(t);
-  showStatus('Transition: ' + t + 'sec - pensez a Sauvegarder!', true);
-}
-
-function toggleLivePreview() {
-  var btn = document.getElementById('btn-live-preview');
-  if (livePreviewActive) {
-    clearInterval(livePreviewInterval);
-    livePreviewActive = false;
-    btn.textContent = 'Live Preview OFF';
-    btn.style.background = '#0d3b2e';
-    renderPanel();
-    showStatus('Live Preview desactive', false);
-  } else {
-    livePreviewActive = true;
-    btn.textContent = 'Live Preview ON';
-    btn.style.background = '#238636';
-    showStatus('Live Preview actif - valeurs reelles', true);
-    updateLiveValues();
-    livePreviewInterval = setInterval(updateLiveValues, 5000);
-  }
-}
-
-async function updateLiveValues() {
-  try {
-    var r = await fetch('/api/live_values');
-    var vals = await r.json();
-    var sensors = cfg.diy[currentPanel].sensor;
-    var preview = document.getElementById('preview');
-    var items = preview.querySelectorAll('.preview-item');
-    sensors.forEach(function(s, i) {
-      var mapped = vals[s.label] || vals['mapped_' + s.label];
-      if (mapped !== undefined && items[i]) {
-        items[i].textContent = (s.name||'') + ': ' + mapped + (s.unit||'');
-      }
-    });
-  } catch(e) {}
-}
-
-function snapVal(v, size) {
-  if (!snapEnabled) return Math.round(v);
-  return Math.round(v / size) * size;
-}
-
-function pushHistory() {
-  undoHistory = undoHistory.slice(0, undoIdx + 1);
-  undoHistory.push(JSON.stringify(cfg));
-  undoIdx = undoHistory.length - 1;
-  if (undoHistory.length > 30) { undoHistory.shift(); undoIdx--; }
-}
-
-function undo() {
-  if (undoIdx <= 0) { showStatus('Rien a annuler', false); return; }
-  undoIdx--;
-  cfg = JSON.parse(history[undoIdx]);
-  renderPanelBtns();
-  renderPanel();
-  showStatus('Annule', true);
-}
-
-document.addEventListener('keydown', function(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
-});
-
-document.addEventListener('DOMContentLoaded', function() {
-  initButtons();
-  load();
-});
-
-function initButtons() {
-  document.getElementById('btn-add-panel').addEventListener('click', addPanel);
-  document.getElementById('btn-save').addEventListener('click', save);
-  document.getElementById('btn-undo').addEventListener('click', undo);
-  document.getElementById('btn-fullscreen').addEventListener('click', showFullscreen);
-  document.getElementById('btn-export').addEventListener('click', exportJSON);
-  document.getElementById('btn-add-element').addEventListener('click', addElement);
-  document.getElementById('btn-duplicate').addEventListener('click', duplicateSelected);
-  document.getElementById('btn-delete').addEventListener('click', deleteSelected);
-  document.getElementById('btn-close-fullscreen').addEventListener('click', hideFullscreen);
-  document.getElementById('import-file').addEventListener('change', function() { importJSON(this); });
-  document.getElementById('upload-file').addEventListener('change', function() { uploadImage(this); });
-  document.getElementById('snap-toggle').addEventListener('change', function() { toggleSnap(this.checked); });
-  document.getElementById('btn-apply-time').addEventListener('click', applySwitchTime);
-  document.getElementById('btn-live-preview').addEventListener('click', toggleLivePreview);
-}
-
-async function load() {
-  try {
-    var r = await fetch('/api/config');
-    cfg = await r.json();
-    pushHistory();
-    initButtons();
-    if (cfg.setup && cfg.setup.switchTime) {
-      document.getElementById('switch-time').value = cfg.setup.switchTime;
-    }
-    renderPanelBtns();
-    renderPanel();
-    loadLabels();
-  } catch(e) { showStatus('Erreur chargement: ' + e, false); }
-}
-
-async function loadLabels() {
-  try {
-    var r = await fetch('/api/labels');
-    var labels = await r.json();
-    var el = document.getElementById('labels-list');
-    el.innerHTML = labels.map(function(l) {
-      return '<span class="label-tag" data-label="' + esc(l) + '" onclick="copyLabel(this.dataset.label)">' + esc(l) + '</span>';
-    }).join('');
-  } catch(e) {}
-}
-
-function copyLabel(l) {
-  insertLabel(l);
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(l);
-    }
-  } catch(e) {}
-}
-
-function fallbackCopy(l) {
-  var ta = document.createElement('textarea');
-  ta.value = l;
-  document.body.appendChild(ta);
-  ta.select();
-  document.execCommand('copy');
-  document.body.removeChild(ta);
-  insertLabel(l);
-}
-
-function insertLabel(l) {
-  if (selectedIdx >= 0) {
-    cfg.diy[currentPanel].sensor[selectedIdx].label = l;
-    renderPanel();
-    showStatus('Label applique: ' + l, true);
-  } else {
-    showStatus('Copie: ' + l, true);
-  }
-}
-
-function renderPanelBtns() {
-  var el = document.getElementById('panel-btns');
-  el.innerHTML = cfg.diy.map(function(p, i) {
-    return '<span style="display:inline-flex;gap:2px;align-items:center">' +
-      '<button class="btn ' + (i===currentPanel?'active':'') + '" onclick="switchPanel(' + i + ')">P' + (i+1) + '</button>' +
-      (cfg.diy.length > 1 ? '<button class="btn btn-red" style="padding:2px 6px;font-size:11px" onclick="deletePanel(' + i + ')">x</button>' : '') +
-      '</span>';
-  }).join('');
-}
-
-function deletePanel(i) {
-  if (!confirm('Supprimer le panneau ' + (i+1) + ' ?')) return;
-  pushHistory();
-  cfg.diy.splice(i, 1);
-  cfg.mianban = cfg.diy.map(function(_,idx) { return idx+1; });
-  if (currentPanel >= cfg.diy.length) currentPanel = cfg.diy.length - 1;
-  selectedIdx = -1;
-  renderPanelBtns();
-  renderPanel();
-  showStatus('Panneau supprime', true);
-}
-
-function switchPanel(i) {
-  currentPanel = i;
-  selectedIdx = -1;
-  renderPanelBtns();
-  renderPanel();
-}
-
-function renderPanel() {
-  var panel = cfg.diy[currentPanel];
-  var sensors = panel.sensor;
-  var img = panel.img;
-  document.getElementById('bg-img').src = '/api/image/' + img + '?t=' + Date.now();
-  document.getElementById('current-img').textContent = img;
-
-  var preview = document.getElementById('preview');
-  preview.querySelectorAll('.preview-item').forEach(function(e) { e.remove(); });
-  
-  sensors.forEach(function(s, i) {
-    var el = document.createElement('div');
-    el.className = 'preview-item' + (i===selectedIdx?' selected':'');
-    el.style.left = (s.x / 960 * 100) + '%';
-    el.style.top = (s.y / 376 * 100) + '%';
-    el.style.fontSize = Math.max(8, (s.fontSize||24) * 0.45) + 'px';
-    var col = colorToHex(s.fontColor);
-    el.style.color = col;
-    el.textContent = (s.name||'?') + ': ' + (s.value||'');
-    el.setAttribute('data-idx', i);
-
-    el.addEventListener('mousedown', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      isDragging = true;
-      dragIdx = i;
-      dragEl = el;
-      el.classList.add('dragging');
-      selectRow(i);
-    });
-
-    preview.appendChild(el);
+function renderSchedule(rules){const box=$('#schedule');box.innerHTML='';(rules||[]).forEach(r=>box.append(scheduleRow(r)));}
+function renderProviders(){
+  const root=$('#providers');root.innerHTML='';
+  Object.entries(providerMeta).forEach(([name,meta])=>{
+    const p=(settings.providers||{})[name]||{};const card=document.createElement('section');card.className='card provider';card.dataset.name=name;
+    let extra='';(meta.extra||[]).forEach(k=>extra+=`<div class="field"><label>${secretLabel(k)}</label><input data-extra="${k}" value="${esc(p[k]||'')}"></div>`);
+    let secrets='';meta.secrets.forEach(k=>secrets+=`<div class="field"><label>${secretLabel(k)}${p.secret_set?' · saved':''}</label><input data-secret="${k}" type="${k.includes('password')||k.includes('token')||k.includes('key')?'password':'text'}" placeholder="${p.secret_set?'leave blank to keep saved value':''}"></div>`);
+    card.innerHTML=`<div class="head"><h3>${meta.title}</h3><label class="toggle"><input class="enabled" type="checkbox" ${p.enabled?'checked':''}> enabled</label></div><div class="field"><label>URL / IP:port</label><input class="url" value="${esc(p.url||'')}"></div>${extra}${secrets}<div class="row"><label class="toggle"><input class="verify" type="checkbox" ${p.verify_tls!==false?'checked':''}> Verify TLS</label><button class="btn test">Test connection</button></div><div class="status test-status"></div>`;
+    card.querySelector('.test').onclick=()=>testProvider(name,card);root.append(card);
   });
-
-  var tbody = document.getElementById('table-body');
-  if (sensors.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#8b949e;padding:20px">Aucun element - cliquez sur + Element pour en ajouter</td></tr>';
-  } else {
-    tbody.innerHTML = sensors.map(function(s, i) {
-      var col = colorToHex(s.fontColor);
-      return '<tr id="row-' + i + '" class="' + (i===selectedIdx?'selected-row':'') + '" onclick="selectRow(' + i + ')">' +
-        '<td style="text-align:center;color:#8b949e">' + (i+1) + '</td>' +
-        '<td><input type="text" data-i="' + i + '" data-k="name" value="' + esc(s.name) + '" onchange="updateStr(this)"></td>' +
-        '<td><input type="text" data-i="' + i + '" data-k="label" value="' + esc(s.label||"") + '" onchange="updateStr(this)"></td>' +
-        '<td><input type="number" data-i="' + i + '" data-k="x" value="' + (s.x||0) + '" onchange="updateNum(this)"></td>' +
-        '<td><input type="number" data-i="' + i + '" data-k="y" value="' + (s.y||0) + '" onchange="updateNum(this)"></td>' +
-        '<td><input type="number" data-i="' + i + '" data-k="fontSize" value="' + (s.fontSize||24) + '" onchange="updateNum(this)"></td>' +
-        '<td><input type="color" data-i="' + i + '" data-k="fontColor" value="' + col + '" onchange="updateColor(this)"></td>' +
-        '<td><input type="text" data-i="' + i + '" data-k="unit" value="' + esc(s.unit||"") + '" onchange="updateStr(this)"></td>' +
-        '<td><input type="text" data-i="' + i + '" data-k="value" value="' + esc(s.value||"") + '" onchange="updateStr(this)"></td>' +
-        '<td style="text-align:center">' +
-          '<button class="btn" style="padding:2px 6px;font-size:11px" onclick="dupRow(' + i + ')">Dup</button> ' +
-          '<button class="btn btn-red" onclick="delRow(' + i + ')">X</button>' +
-        '</td>' +
-        '</tr>';
-    }).join('');
-  }
 }
-
-function selectRow(i) {
-  selectedIdx = i;
-  renderPanel();
-  var row = document.getElementById('row-' + i);
-  if (row) row.scrollIntoView({behavior:'smooth', block:'nearest'});
+function collectProvider(card){
+  const name=card.dataset.name, out={enabled:card.querySelector('.enabled').checked,url:card.querySelector('.url').value.trim(),verify_tls:card.querySelector('.verify').checked};
+  card.querySelectorAll('[data-extra]').forEach(el=>out[el.dataset.extra]=el.value.trim());
+  card.querySelectorAll('[data-secret]').forEach(el=>{if(el.value.trim())out[el.dataset.secret]=el.value.trim();});
+  return [name,out];
 }
-
-function updateStr(el) {
-  pushHistory();
-  cfg.diy[currentPanel].sensor[parseInt(el.dataset.i)][el.dataset.k] = el.value;
-  renderPanel();
+async function testProvider(name,card){
+  const st=card.querySelector('.test-status');st.textContent='Testing…';st.className='status test-status';
+  const [,provider]=collectProvider(card);await save(false,{providers:{[name]:provider}});
+  const r=await fetch(`/api/providers/${name}/test`,{method:'POST'}),d=await r.json();st.textContent=d.message||JSON.stringify(d);st.className='status test-status '+(d.ok?'ok':'bad');
 }
-
-function updateNum(el) {
-  pushHistory();
-  cfg.diy[currentPanel].sensor[parseInt(el.dataset.i)][el.dataset.k] = +el.value;
-  renderPanel();
+function collectDisplay(){
+  return {brand:$('#brand').value.trim(),brightness:+$('#brightness').value,schedule_enabled:$('#scheduleEnabled').checked,switch_seconds:+$('#switchSeconds').value,timezone:$('#timezone').value.trim()||'UTC',schedule:[...document.querySelectorAll('.schedule-row')].map(r=>({start:r.querySelector('.sch-start').value,end:r.querySelector('.sch-end').value,brightness:+r.querySelector('.sch-bright').value}))};
 }
-
-function updateColor(el) {
-  pushHistory();
-  cfg.diy[currentPanel].sensor[parseInt(el.dataset.i)][el.dataset.k] = el.value;
-  renderPanel();
+async function save(show=true,partial=null){
+  const payload=partial||{display:collectDisplay(),providers:Object.fromEntries([...document.querySelectorAll('.provider')].map(collectProvider))};
+  const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});settings=await r.json();
+  if(show){$('#saveStatus').textContent='Saved';$('#saveStatus').className='status ok';setTimeout(()=>$('#saveStatus').textContent='',1800);}render();return settings;
 }
-
-function addElement() {
-  if (!cfg || !cfg.diy || !cfg.diy[currentPanel]) {
-    showStatus('Erreur: config non chargee', false);
-    return;
-  }
-  pushHistory();
-  if (!cfg.diy[currentPanel].sensor) cfg.diy[currentPanel].sensor = [];
-  cfg.diy[currentPanel].sensor.push({
-    mode:1, type:1, name:'Nouveau', label:'cpu_temperature',
-    x:480, y:188, fontSize:24, fontColor:'#ffffff', fontWeight:'bold',
-    unit:'', value:'0', width:0, height:0, textDirection:0, direction:1,
-    textAlign:'center', integerDigits:-1, decimalDigits:0,
-    minAngle:0, maxAngle:180, minValue:0, maxValue:100,
-    pic:'', xz_x:0, xz_y:0
-  });
-  selectedIdx = cfg.diy[currentPanel].sensor.length - 1;
-  renderPanel();
-  showStatus('Element ajoute - modifiez le label dans le tableau', true);
-  var tbody = document.getElementById('table-body');
-  if (tbody) tbody.lastElementChild && tbody.lastElementChild.scrollIntoView({behavior:'smooth'});
+function render(){
+  const d=settings.display||{};$('#brand').value=d.brand||'AOOSCOPE';$('#brightness').value=d.brightness??100;$('#brightnessLabel').textContent=`${d.brightness??100}%`;$('#switchSeconds').value=d.switch_seconds??8;$('#timezone').value=d.timezone||'UTC';$('#scheduleEnabled').checked=!!d.schedule_enabled;renderSchedule(d.schedule||[]);renderProviders();
 }
-
-function dupRow(i) {
-  pushHistory();
-  var clone = JSON.parse(JSON.stringify(cfg.diy[currentPanel].sensor[i]));
-  clone.x += 20; clone.y += 20;
-  cfg.diy[currentPanel].sensor.splice(i+1, 0, clone);
-  selectedIdx = i+1;
-  renderPanel();
+async function refreshStatus(){
+  const s=await (await fetch('/api/status',{cache:'no-store'})).json();
+  $('#device').textContent=`${s.device_present?'●':'○'} Display · ${s.brightness}%`;
+  $('#device').className='pill '+(s.device_present?'ok':'bad');
+  const age=s.updated_unix?Math.max(0,Math.round(Date.now()/1000-s.updated_unix)):null;
+  $('#displayLive').textContent=s.device_present?`LCD connected · telemetry ${age===null?'waiting':age+'s ago'} · ${s.brightness}%`:'LCD device unavailable';
+  $('#displayLive').className='status '+(s.device_present?'ok':'bad');
+  return s;
 }
-
-function duplicateSelected() {
-  if (selectedIdx < 0) { showStatus('Selectionnez un element', false); return; }
-  dupRow(selectedIdx);
+async function applyBrightness(value){
+  $('#brightnessLabel').textContent=`${value}%`;
+  clearTimeout(brightnessTimer);
+  brightnessTimer=setTimeout(async()=>{
+    const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({display:{brightness:+value}})});
+    settings=await r.json();
+    const s=await refreshStatus();
+    $('#saveStatus').textContent=`Brightness ${s.brightness}% applied to LCD`;
+    $('#saveStatus').className='status ok';
+    setTimeout(()=>$('#saveStatus').textContent='',1400);
+  },250);
 }
+async function load(){settings=await (await fetch('/api/settings',{cache:'no-store'})).json();render();await refreshStatus();}
+$('#brightness').oninput=e=>applyBrightness(e.target.value);
+$('#addSchedule').onclick=()=>$('#schedule').append(scheduleRow());$('#save').onclick=()=>save(true);load();setInterval(refreshStatus,5000);
+</script></body></html>"""
 
-function delRow(i) {
-  if (!confirm('Supprimer?')) return;
-  pushHistory();
-  cfg.diy[currentPanel].sensor.splice(i, 1);
-  selectedIdx = -1;
-  renderPanel();
-}
 
-function deleteSelected() {
-  if (selectedIdx < 0) { showStatus('Selectionnez un element', false); return; }
-  delRow(selectedIdx);
-}
+app = create_app()
 
-function addPanel() {
-  pushHistory();
-  cfg.diy.push({ type:5, img:'proxmox_panel.jpg', sensor:[], mianban: cfg.diy.length+1 });
-  if (!cfg.mianban) cfg.mianban = [];
-  cfg.mianban.push(cfg.diy.length);
-  currentPanel = cfg.diy.length - 1;
-  selectedIdx = -1;
-  renderPanelBtns();
-  renderPanel();
-  showStatus('Panneau ' + cfg.diy.length + ' cree', true);
-}
-
-function uploadImage(input) {
-  if (!input.files || !input.files[0]) return;
-  var file = input.files[0];
-  var formData = new FormData();
-  formData.append('image', file);
-  formData.append('panel', currentPanel);
-  fetch('/api/upload_image', { method:'POST', body: formData })
-    .then(function(r) { return r.json(); })
-    .then(function(res) {
-      if (res.ok) {
-        cfg.diy[currentPanel].img = res.filename;
-        renderPanel();
-        showStatus('Image uploadee: ' + res.filename + ' (redim. 960x376)', true);
-      } else {
-        showStatus('Erreur: ' + res.message, false);
-      }
-    })
-    .catch(function(e) { showStatus('Erreur upload: ' + e, false); });
-}
-
-function exportJSON() {
-  var blob = new Blob([JSON.stringify(cfg, null, 2)], {type:'application/json'});
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'monitor_backup_' + new Date().toISOString().slice(0,10) + '.json';
-  a.click();
-  showStatus('Export OK', true);
-}
-
-function importJSON(input) {
-  if (!input.files || !input.files[0]) return;
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    try {
-      var newCfg = JSON.parse(e.target.result);
-      pushHistory();
-      cfg = newCfg;
-      currentPanel = 0;
-      renderPanelBtns();
-      renderPanel();
-      showStatus('Import OK', true);
-    } catch(err) {
-      showStatus('JSON invalide: ' + err, false);
-    }
-  };
-  reader.readAsText(input.files[0]);
-}
-
-function showFullscreen() {
-  var el = document.getElementById('fullscreen-view');
-  var img = document.getElementById('fullscreen-img');
-  img.src = '/api/image/' + cfg.diy[currentPanel].img + '?t=' + Date.now();
-  el.style.display = 'flex';
-}
-
-function hideFullscreen() {
-  document.getElementById('fullscreen-view').style.display = 'none';
-}
-
-async function save() {
-  try {
-    var r = await fetch('/api/save', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(cfg)
-    });
-    var res = await r.json();
-    showStatus(res.message, res.ok);
-  } catch(e) { showStatus('Erreur: ' + e, false); }
-}
-
-function showStatus(msg, ok) {
-  var el = document.getElementById('status');
-  el.className = 'status ' + (ok?'ok':'err');
-  el.textContent = msg;
-  setTimeout(function() { el.className=''; el.textContent=''; }, 4000);
-}
-
-// Drag & Drop global events
-document.addEventListener('mousemove', function(e) {
-  if (!isDragging || dragIdx < 0) return;
-  var preview = document.getElementById('preview');
-  var rect = preview.getBoundingClientRect();
-  var gs = parseInt(document.getElementById('grid-size').value) || 10;
-  
-  var rawX = (e.clientX - rect.left) / rect.width * 960;
-  var rawY = (e.clientY - rect.top) / rect.height * 376;
-  rawX = Math.max(0, Math.min(960, rawX));
-  rawY = Math.max(0, Math.min(376, rawY));
-  
-  var newX = snapEnabled ? Math.round(rawX / gs) * gs : Math.round(rawX);
-  var newY = snapEnabled ? Math.round(rawY / gs) * gs : Math.round(rawY);
-  
-  cfg.diy[currentPanel].sensor[dragIdx].x = newX;
-  cfg.diy[currentPanel].sensor[dragIdx].y = newY;
-  
-  if (dragEl) {
-    dragEl.style.left = (newX / 960 * 100) + '%';
-    dragEl.style.top = (newY / 376 * 100) + '%';
-  }
-  
-  var rowX = document.querySelector('#row-' + dragIdx + ' input[data-k="x"]');
-  var rowY = document.querySelector('#row-' + dragIdx + ' input[data-k="y"]');
-  if (rowX) rowX.value = newX;
-  if (rowY) rowY.value = newY;
-});
-
-document.addEventListener('mouseup', function(e) {
-  if (!isDragging) return;
-  isDragging = false;
-  if (dragEl) dragEl.classList.remove('dragging');
-  if (dragIdx >= 0) pushHistory();
-  dragEl = null;
-  dragIdx = -1;
-});
-</script>
-</body>
-</html>"""
-
-@app.route('/')
-def index():
-    return Response(HTML, mimetype='text/html; charset=utf-8')
-
-@app.route('/api/config')
-def get_config():
-    return jsonify(json.load(open(CONFIG)))
-
-@app.route('/api/save', methods=['POST'])
-def save_config():
-    try:
-        cfg = request.json
-        os.system('cp ' + CONFIG + ' ' + CONFIG + '.bak')
-        with open(CONFIG, 'w', encoding='utf-8') as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
-        subprocess.run(['pkill', '-f', 'asterctl'], capture_output=True); import time; time.sleep(1); subprocess.Popen(['/usr/local/bin/asterctl', '--config-dir', '/app/cfg', '--config', 'monitor.json', '--sensor-path', '/app/cfg/sensors/values.txt', '--sensor-mapping', '/app/cfg/sensor-mapping.cfg'])
-        return jsonify({'ok': True, 'message': 'Sauvegarde OK et asterctl recharge!'})
-    except Exception as e:
-        return jsonify({'ok': False, 'message': 'Erreur: ' + str(e)})
-
-@app.route('/api/image/<filename>')
-def get_image(filename):
-    return send_from_directory(IMG_DIR, filename)
-
-@app.route('/api/upload_image', methods=['POST'])
-def upload_image():
-    try:
-        file = request.files['image']
-        panel = int(request.form.get('panel', 0))
-        img = Image.open(file.stream)
-        img = img.convert('RGB')
-        img = img.resize((960, 376), Image.LANCZOS)
-        filename = 'panel_' + str(panel+1) + '_bg.jpg'
-        filepath = os.path.join(IMG_DIR, filename)
-        img.save(filepath, 'JPEG', quality=92)
-        return jsonify({'ok': True, 'filename': filename})
-    except Exception as e:
-        return jsonify({'ok': False, 'message': str(e)})
-
-@app.route('/api/live_values')
-def get_live_values():
-    try:
-        vals = {}
-        # Lire le fichier de valeurs brutes
-        with open('/app/cfg/sensors/values.txt') as f:
-            for line in f:
-                if ':' in line:
-                    parts = line.split(':', 1)
-                    key = parts[0].strip()
-                    val = parts[1].strip().split(' ')[0]
-                    vals[key] = val
-        # Lire le mapping
-        mapping = {}
-        try:
-            with open('/app/cfg/sensor-mapping.cfg') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#') and ':' in line:
-                        k, v = line.split(':', 1)
-                        mapping[k.strip()] = v.strip()
-        except:
-            pass
-        # Appliquer le mapping
-        mapped = {}
-        for panel_label, sensor_key in mapping.items():
-            if sensor_key in vals:
-                mapped[panel_label] = vals[sensor_key]
-        # Ajouter les valeurs directes aussi
-        mapped.update(vals)
-        return jsonify(mapped)
-    except Exception as e:
-        return jsonify({})
-
-@app.route('/api/labels')
-def get_labels():
-    try:
-        labels = []
-        with open('/app/cfg/sensors/values.txt') as f:
-            for line in f:
-                if ':' in line:
-                    labels.append(line.split(':')[0].strip())
-        return jsonify(sorted(labels))
-    except:
-        return jsonify([])
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8765, debug=False)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8765, debug=False)

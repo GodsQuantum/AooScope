@@ -1,0 +1,12 @@
+/.git
+/.github
+/.venv
+/.local
+/__pycache__
+**/__pycache__
+*.pyc
+/tests
+/docs
+*.md
+compose*.yaml
+.env*

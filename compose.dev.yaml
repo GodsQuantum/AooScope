@@ -1,0 +1,6 @@
+services:
+  aooscope:
+    build:
+      context: .
+    image: aooscope:dev
+    pull_policy: never
