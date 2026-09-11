@@ -1,46 +1,30 @@
-FROM debian:trixie-slim
-
-# Installer les dépendances système
-RUN apt-get update && apt-get install -y \
-    curl \
-    build-essential \
-    pkg-config \
-    libudev-dev \
-    git \
-    python3 \
-    python3-pip \
-    python3-pil \
-    python3-flask \
-    python3-flask-cors \
-    iproute2 \
-    procps \
+FROM rust:trixie AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git pkg-config libudev-dev \
     && rm -rf /var/lib/apt/lists/*
+ARG AOOSTAR_RS_REF=2f4d95957d2d61f9fe5cd27e4cf14bd2ae566f63
+RUN git clone https://github.com/zehnm/aoostar-rs.git /src/aoostar-rs \
+    && cd /src/aoostar-rs \
+    && git checkout "$AOOSTAR_RS_REF" \
+    && cargo build --release --locked \
+    && install -Dm755 target/release/asterctl /out/asterctl \
+    && install -Dm755 target/release/aster-sysinfo /out/aster-sysinfo
 
-# Installer Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Compiler asterctl depuis les sources
-RUN git clone https://github.com/zehnm/aoostar-rs.git /build/aoostar-rs && \
-    cd /build/aoostar-rs && \
-    cargo build --release && \
-    cp target/release/asterctl /usr/local/bin/ && \
-    cp target/release/aster-sysinfo /usr/local/bin/ && \
-    rm -rf /build
-
-# Créer les dossiers
-RUN mkdir -p /app/cfg/sensors /app/fonts
-
-# Copier les fichiers de config
-COPY cfg/ /app/cfg/
-COPY webui.py /app/
-COPY proxmox-sensors.sh /app/
-COPY start.sh /app/
-
-RUN chmod +x /app/proxmox-sensors.sh /app/start.sh
-
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libudev1 python3 python3-pil python3-flask python3-waitress tzdata \
+    iproute2 procps tini \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /app/cfg/sensors /app/cfg/private /app/defaults
+COPY --from=builder /out/asterctl /usr/local/bin/asterctl
+COPY --from=builder /out/aster-sysinfo /usr/local/bin/aster-sysinfo
+COPY --from=builder /src/aoostar-rs/fonts/ /app/fonts/
+COPY defaults/ /app/defaults/
+COPY aooscope/ /app/aooscope/
+COPY webui.py start.sh /app/
+RUN chmod 0755 /app/start.sh
 WORKDIR /app
-
+ENV PYTHONPATH=/app PYTHONUNBUFFERED=1
 EXPOSE 8765
-
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
 CMD ["/app/start.sh"]
