@@ -12,4 +12,7 @@ check "Persistent config uses canonical appdata" "grep -Fq '/srv/lxc/administrat
 check "Sensor helper uses container paths" "grep -Fq '/app/cfg/sensors/values.txt' proxmox-sensors.sh && ! grep -Fq '/root/aoostar-rs' proxmox-sensors.sh"
 check "Host-only Proxmox helper is gated" "grep -Fq 'command -v qm' start.sh && grep -Fq 'command -v pct' start.sh && grep -Fq '/sys/class/net/vmbr0' start.sh"
 check "Runtime contains upstream fonts" "grep -Fq 'COPY --from=builder /src/aoostar-rs/fonts/ /app/fonts/' Dockerfile"
+check "Telemetry module copied into runtime" "grep -Fq 'COPY cloud9_telemetry.py /app/' Dockerfile"
+check "Telemetry starts before asterctl" "grep -Fq 'python3 /app/cloud9_telemetry.py &' start.sh"
+check "asterctl reads sensor directory" "grep -Fq -- '--sensor-path /app/cfg/sensors/' start.sh"
 exit "$fail"

@@ -21,6 +21,7 @@ COPY --from=builder /out/aster-sysinfo /usr/local/bin/aster-sysinfo
 COPY --from=builder /src/aoostar-rs/fonts/ /app/fonts/
 COPY cfg/ /app/cfg/
 COPY webui.py proxmox-sensors.sh start.sh /app/
+COPY cloud9_telemetry.py /app/
 RUN chmod 0755 /app/start.sh /app/proxmox-sensors.sh
 WORKDIR /app
 EXPOSE 8765
