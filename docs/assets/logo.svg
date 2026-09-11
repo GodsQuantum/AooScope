@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" role="img" aria-labelledby="title desc">
+  <title id="title">AooScope</title><desc id="desc">Orbital server display logo for AooScope.</desc>
+  <rect width="720" height="360" rx="52" fill="#071019"/>
+  <ellipse cx="360" cy="150" rx="238" ry="88" fill="none" stroke="#18d7ff" stroke-width="10" transform="rotate(-8 360 150)"/>
+  <ellipse cx="360" cy="150" rx="190" ry="72" fill="none" stroke="#1687ff" stroke-width="7" transform="rotate(13 360 150)" opacity=".9"/>
+  <g transform="translate(250 74)">
+    <rect x="0" y="34" width="52" height="126" rx="10" fill="#0f1c2a" stroke="#eaf7ff" stroke-width="7"/>
+    <rect x="62" y="10" width="58" height="150" rx="10" fill="#0f1c2a" stroke="#eaf7ff" stroke-width="7"/>
+    <rect x="130" y="48" width="50" height="112" rx="10" fill="#0f1c2a" stroke="#eaf7ff" stroke-width="7"/>
+    <g fill="#19d8ff"><rect x="13" y="51" width="26" height="9"/><rect x="13" y="75" width="26" height="9"/><rect x="13" y="99" width="26" height="9"/><rect x="76" y="28" width="30" height="9"/><rect x="76" y="54" width="30" height="9"/><rect x="76" y="80" width="30" height="9"/><rect x="143" y="66" width="24" height="9"/><rect x="143" y="90" width="24" height="9"/></g>
+  </g>
+  <circle cx="507" cy="115" r="36" fill="none" stroke="#19d8ff" stroke-width="9"/>
+  <path d="M506 78v74M470 115h72" stroke="#eaf7ff" stroke-width="8" stroke-linecap="round"/>
+  <text x="360" y="292" text-anchor="middle" fill="#f4fbff" font-family="DejaVu Sans, sans-serif" font-size="72" font-weight="800" letter-spacing="2">AooScope</text>
+  <rect x="250" y="316" width="220" height="9" rx="4.5" fill="#19d8ff"/>
+</svg>
