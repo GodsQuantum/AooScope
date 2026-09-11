@@ -12,14 +12,14 @@ RUN git clone https://github.com/zehnm/aoostar-rs.git /src/aoostar-rs \
 
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libudev1 python3 python3-pil python3-flask python3-flask-cors \
+    ca-certificates libudev1 python3 python3-pil python3-flask python3-waitress tzdata \
     iproute2 procps tini \
     && rm -rf /var/lib/apt/lists/*
-RUN mkdir -p /app/cfg/sensors /run/aooscope-secrets
+RUN mkdir -p /app/cfg/sensors /app/cfg/private /app/defaults
 COPY --from=builder /out/asterctl /usr/local/bin/asterctl
 COPY --from=builder /out/aster-sysinfo /usr/local/bin/aster-sysinfo
 COPY --from=builder /src/aoostar-rs/fonts/ /app/fonts/
-COPY cfg/ /app/cfg/
+COPY defaults/ /app/defaults/
 COPY aooscope/ /app/aooscope/
 COPY webui.py start.sh /app/
 RUN chmod 0755 /app/start.sh

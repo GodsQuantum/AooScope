@@ -4,6 +4,7 @@ import math
 import os
 import urllib.parse
 import urllib.request
+import ssl
 from pathlib import Path
 
 
@@ -25,10 +26,11 @@ def _absolute_url(base_url, value):
 
 
 class JSONClient:
-    def __init__(self, base_url, headers=None, timeout=3.0):
+    def __init__(self, base_url, headers=None, timeout=3.0, verify_tls=True):
         self.base_url = base_url.rstrip("/")
         self.headers = dict(headers or {})
         self.timeout = float(timeout)
+        self.verify_tls = bool(verify_tls)
 
     def get(self, path, params=None):
         url = self.base_url + "/" + path.lstrip("/")
@@ -37,7 +39,10 @@ class JSONClient:
         headers = {"Accept": "application/json", "User-Agent": "aooscope/0.1"}
         headers.update(self.headers)
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+        kwargs = {"timeout": self.timeout}
+        if url.startswith("https://") and not self.verify_tls:
+            kwargs["context"] = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, **kwargs) as response:
             return json.load(response)
 
 
@@ -289,4 +294,27 @@ def build_media_clients(env=None):
         clients["radarr"] = JSONClient(env["RADARR_URL"], {"X-Api-Key": radarr_key})
     if env.get("QBIT_URL"):
         clients["qbittorrent"] = JSONClient(env["QBIT_URL"])
+    return clients
+
+
+def build_media_clients_from_settings(settings, secrets=None):
+    from aooscope.providers import normalize_url
+    secrets = secrets or {}
+    providers = (settings or {}).get("providers") or {}
+    clients = {}
+    def cfg(name):
+        value = providers.get(name) or {}
+        return value if value.get("enabled") and value.get("url") else None
+    value = cfg("jellyfin")
+    if value and secrets.get("jellyfin", {}).get("api_key"):
+        clients["jellyfin"] = JSONClient(normalize_url(value["url"]), {"X-Emby-Token": secrets["jellyfin"]["api_key"]}, verify_tls=value.get("verify_tls", True))
+    value = cfg("silo")
+    if value and secrets.get("silo", {}).get("api_key"):
+        clients["silo"] = JSONClient(normalize_url(value["url"]), {"Authorization": "Bearer " + secrets["silo"]["api_key"]}, verify_tls=value.get("verify_tls", True))
+    value = cfg("radarr")
+    if value and secrets.get("radarr", {}).get("api_key"):
+        clients["radarr"] = JSONClient(normalize_url(value["url"]), {"X-Api-Key": secrets["radarr"]["api_key"]}, verify_tls=value.get("verify_tls", True))
+    value = cfg("qbittorrent")
+    if value:
+        clients["qbittorrent"] = JSONClient(normalize_url(value["url"]), verify_tls=value.get("verify_tls", True))
     return clients

@@ -1,330 +1,144 @@
-# AOOSTAR WTR MAX — Proxmox LCD Screen Manager
+<p align="center">
+  <img src="docs/assets/logo.svg" width="170" alt="AooScope logo">
+</p>
 
-> Full control of the AOOSTAR WTR MAX built-in LCD screen under Proxmox VE, with a visual web configuration editor.
+<h1 align="center">AooScope</h1>
 
-> 📸 **Screenshots coming soon** — Feel free to submit yours via Pull Request!
+<p align="center"><strong>A glanceable smart dashboard for AOOSTAR LCD systems.</strong></p>
 
-## 🖥️ Overview
+<p align="center">
+  <img src="https://img.shields.io/badge/display-960×376-18d7ff" alt="960x376 display">
+  <img src="https://img.shields.io/badge/runtime-Docker-2496ed" alt="Docker">
+  <img src="https://img.shields.io/badge/license-MIT-3dd7cf" alt="MIT license">
+  <img src="https://img.shields.io/badge/image-GHCR-54cd8a" alt="GHCR image">
+</p>
 
-This project enables real-time system information display on the AOOSTAR WTR MAX front LCD panel, running directly on Proxmox VE. It includes a complete web-based visual editor to customize the display without any coding.
-
-**3 rotating panels:**
-- **Panel 1** — CPU temp & usage, RAM, GPU, network speed, IP, time
-- **Panel 2** — SSD/HDD temperatures and usage bars
-- **Panel 3** — Proxmox dashboard: local IP, VMs/LXC count, uptime, network traffic
-
-> 📸 **Panel screenshots coming soon**
-
----
-
-## ✨ Features
-
-- 📊 Real-time system metrics display
-- 🎨 Visual web editor (AOOSTAR Screen Editor v2)
-- 🖱️ Drag & drop elements on the preview
-- 📐 Configurable snap-to-grid
-- 🎨 Per-element color picker
-- 🖼️ Background image upload (auto-resize to 960×376)
-- ➕ Add/remove panels and elements
-- 📋 Duplicate elements
-- ↩️ Undo/Redo (Ctrl+Z, 30 levels)
-- 💾 Export/Import JSON configuration
-- 👁️ Live Preview with real sensor values
-- ⏱️ Configurable transition duration between panels
-- 🚀 Auto-start via systemd or Docker
-- 📡 Proxmox-specific metrics (VMs, LXC, uptime, network)
+<p align="center">🇫🇷 <a href="README.fr.md">README en français</a></p>
 
 ---
 
-## 🛠️ Requirements
+AooScope turns the small AOOSTAR LCD into a useful server display rather than a tiny wall of text. It combines large values with visual gauges, storage health, compute telemetry and event-driven media cards that can be understood from across the room.
 
-- AOOSTAR WTR MAX (or compatible)
-- Proxmox VE 8.x or 9.x
-- Internet connection for initial setup
-- Docker (optional, for Docker installation)
+It is a fork and substantial rewrite of `xavtb78/aoostar-proxmox-lcd`, while keeping `zehnm/aoostar-rs` as the low-level display engine.
 
----
+## ✨ Highlights
 
-## 📦 Installation
+- **Far-glance UI** — large numerals, semantic colour, visual gauges and protected text zones designed for a 960×376 panel.
+- **Hardware telemetry** — Linux sysfs temperatures, Radeon activity and shared GPU memory without a host agent.
+- **Proxmox provider** — CPU, RAM, guests, storage, ZFS and SMART through the native read-only API.
+- **Media-aware display** — Jellyfin/Silo playback and Radarr/qBittorrent arrivals can temporarily pre-empt the normal carousel.
+- **Poster-first media cards** — `PLAYING 42%`, `READY IN 9 MIN` and `JUST LANDED` instead of dense tables.
+- **Admin UI** — configure display behaviour and provider `IP:port`/URLs from the browser.
+- **Provider secrets stay private** — saved separately with mode `0600` and never returned by the settings API.
+- **Software brightness schedule** — choose a base luminance and schedules such as `22:00–08:00 → 70%`.
+- **Failure isolation** — an offline provider does not stop the LCD.
+- **Pull-and-run container** — no Rust/Python toolchain required on the target system.
 
-### Method 1 — Native (systemd)
+> **Brightness note:** no documented native WTR MAX backlight command is currently exposed by `aoostar-rs`. AooScope brightness is therefore software luminance: it scales the rendered pixels, not the physical backlight power.
 
-#### 1. Fix apt repositories (if you get 401 errors)
+## 🚀 Quick start
 
-```bash
-echo "# disabled" > /etc/apt/sources.list.d/pve-enterprise.list
-echo "# disabled" > /etc/apt/sources.list.d/ceph.list
-echo "# disabled" > /etc/apt/sources.list.d/ceph.sources
-echo "# disabled" > /etc/apt/sources.list.d/pve-enterprise.sources
-echo "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription" > /etc/apt/sources.list.d/pve-no-sub.list
-apt update && apt full-upgrade -y
-```
+Requirements:
 
-#### 2. Install dependencies
-
-```bash
-apt install -y curl build-essential pkg-config libudev-dev git \
-    python3-pil python3-flask python3-flask-cors
-```
-
-#### 3. Install Rust
+- Linux + Docker Engine / compatible Compose;
+- a supported AOOSTAR LCD exposed as a serial device, commonly `/dev/ttyACM0`;
+- permission for Docker to open that device.
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# Choose 1 (standard installation)
-source $HOME/.cargo/env
-```
+mkdir -p aooscope/data
+cd aooscope
+curl -fsSLO https://raw.githubusercontent.com/GodsQuantum/AooScope/main/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/GodsQuantum/AooScope/main/.env.example
+cp .env.example .env
 
-#### 4. Clone and compile asterctl
-
-> ⚠️ **Important**: The pre-built v0.2.0 binary does NOT support `--sensor-mapping`.
-> You MUST compile from source.
-
-```bash
-cd /root
-git clone https://github.com/zehnm/aoostar-rs.git
-cd /root/aoostar-rs
-cargo build --release
-# Takes 5-10 minutes
-cp target/release/asterctl /usr/local/bin/
-cp target/release/aster-sysinfo /usr/local/bin/
-```
-
-#### 5. Clone this repository
-
-```bash
-git clone https://github.com/YOUR_USERNAME/aoostar-proxmox-lcd.git
-cd aoostar-proxmox-lcd
-```
-
-#### 6. Set up configuration files
-
-```bash
-cp cfg/sensor-mapping.cfg /root/aoostar-rs/cfg/sensor-mapping.cfg
-cp cfg/sensor-mapping-filter.cfg /root/aoostar-rs/cfg/sensor-mapping-filter.cfg
-cp cfg/monitor.json /root/aoostar-rs/cfg/monitor.json
-cp webui.py /root/aoostar-rs/webui.py
-cp proxmox-sensors.sh /root/aoostar-rs/proxmox-sensors.sh
-chmod +x /root/aoostar-rs/proxmox-sensors.sh
-```
-
-#### 7. Edit sensor mapping for your NVMe
-
-Find your NVMe name:
-```bash
-cat /root/aoostar-rs/cfg/sensors/values.txt | grep temperature_nvme_Composite
-```
-
-Edit the mapping:
-```bash
-nano /root/aoostar-rs/cfg/sensor-mapping.cfg
-# Update this line with your NVMe name:
-# storage_ssd[0]['temperature']: temperature_nvme_Composite_YOUR_NVME_NAME
-```
-
-#### 8. Set up systemd services
-
-```bash
-# aster-sysinfo service
-cat > /etc/systemd/system/aster-sysinfo.service << 'EOF'
-[Unit]
-Description=AOOSTAR Sensor Provider
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/aster-sysinfo --refresh 5 -o /root/aoostar-rs/cfg/sensors/values.txt --temp-dir /root/aoostar-rs/cfg/sensors/
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# asterctl service
-cat > /etc/systemd/system/asterctl.service << 'EOF'
-[Unit]
-Description=AOOSTAR Screen Control
-After=aster-sysinfo.service
-
-[Service]
-WorkingDirectory=/root/aoostar-rs
-ExecStart=/usr/local/bin/asterctl --config-dir /root/aoostar-rs/cfg --config monitor.json --sensor-path /root/aoostar-rs/cfg/sensors/values.txt --sensor-mapping /root/aoostar-rs/cfg/sensor-mapping.cfg
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# proxmox-sensors service
-cat > /etc/systemd/system/proxmox-sensors.service << 'EOF'
-[Unit]
-Description=Proxmox Sensors for AOOSTAR LCD
-After=network.target aster-sysinfo.service
-
-[Service]
-ExecStart=/bin/bash /root/aoostar-rs/proxmox-sensors.sh
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# webui service
-cat > /etc/systemd/system/aoostar-webui.service << 'EOF'
-[Unit]
-Description=AOOSTAR Screen Web Editor
-After=network.target
-
-[Service]
-ExecStart=/usr/bin/python3 /root/aoostar-rs/webui.py
-Restart=always
-WorkingDirectory=/root/aoostar-rs
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Enable and start all services
-systemctl daemon-reload
-systemctl enable aster-sysinfo asterctl proxmox-sensors aoostar-webui
-systemctl start aster-sysinfo asterctl proxmox-sensors aoostar-webui
-```
-
----
-
-### Method 2 — Docker
-
-#### Prerequisites
-- Docker installed on Proxmox
-
-#### 1. Clone this repository
-
-```bash
-git clone https://github.com/YOUR_USERNAME/aoostar-proxmox-lcd.git
-cd aoostar-proxmox-lcd
-```
-
-#### 2. Build the Docker image
-
-```bash
-docker build -t aoostar-lcd:latest .
-```
-> ⚠️ This takes 10-15 minutes (Rust compilation inside Docker)
-
-#### 3. Deploy with Docker Compose
-
-```bash
 docker compose up -d
 ```
 
-#### Or deploy via Portainer
+Open `http://127.0.0.1:8765` locally, or change `AOOSCOPE_BIND_ADDRESS` to a trusted LAN address.
 
-1. Build the image locally (step 2 above)
-2. In Portainer → **Stacks** → **Add stack**
-3. Paste the contents of `docker-compose.yml`
-4. Click **Deploy the stack**
+The image is published as:
 
----
-
-## 🌐 Web Editor
-
-Access the visual editor at:
-```
-http://YOUR_PROXMOX_IP:8765
+```text
+ghcr.io/godsquantum/aooscope:latest
 ```
 
-### Editor Features
+## 🖥️ Display behaviour
 
-| Feature | Description |
-|---|---|
-| Drag & drop | Move elements directly on the preview |
-| Snap to grid | Auto-align on configurable grid |
-| Color picker | Set text color per element |
-| Image upload | Auto-resize to 960×376 |
-| Live Preview | Show real sensor values on preview |
-| Transition | Set panel switch duration in seconds |
-| Export/Import | Save and restore JSON configuration |
-| Ctrl+Z | Undo up to 30 actions |
-| Add panel | Create new display panels |
-| Labels | Click a label to apply it to selected element |
+The normal carousel is intentionally small:
 
----
+```text
+Splash → Home → Storage → Compute
+```
 
-## 📐 Screen Specifications
+When a media event is present, Media becomes the first page. When the event disappears, AooScope returns to the normal carousel automatically.
 
-| Property | Value |
-|---|---|
-| Resolution | 960 × 376 pixels |
-| Interface | USB Virtual COM |
-| Device | `/dev/ttyACM0` |
-| Chipset | Winbond `0416:90a1` |
-| Baud rate | 1,500,000 |
+Text is kept visually above dynamic gauges by reserving transparent windows inside gauge assets, so the value/label cannot be covered at high utilisation.
 
----
+## 🔌 Providers
 
-## 🔧 Troubleshooting
+The Admin UI currently understands configuration for:
 
-### Screen not detected
+- Proxmox VE
+- Beszel
+- Jellyfin
+- Silo
+- Radarr
+- Sonarr
+- qBittorrent
+- Immich
+- Ollama
+
+Proxmox, Jellyfin, Silo, Radarr and qBittorrent already feed runtime display state. Other providers are available for connection testing/configuration and are designed to be added to new pages without changing the display engine.
+
+See [`docs/providers.md`](docs/providers.md).
+
+## 🧱 Architecture
+
+```text
+Provider APIs + Linux sysfs
+          │
+          ▼
+   normalized state
+          │
+    telemetry loop
+          │
+          ├── sensors/*.txt ─────┐
+          └── state.json         │
+                                 ▼
+Admin UI ── settings.json ─► display supervisor ─► asterctl ─► AOOSTAR LCD
+              │                   ▲
+              └─ private secrets ─┘
+```
+
+AooScope stays in one container. It does **not** require host networking, the Docker socket, privileged mode or a monitoring daemon installed on the Proxmox host.
+
+See [`docs/architecture.md`](docs/architecture.md).
+
+## 🔐 Security
+
+The Admin UI has no built-in login. The example Compose binds to `127.0.0.1` by default. Use an authenticated reverse proxy or VPN for remote access and do not expose port `8765` directly to the internet.
+
+See [`SECURITY.md`](SECURITY.md).
+
+## 🛠️ Development
+
 ```bash
-ls /dev/ttyACM0
-lsusb | grep Winbond
+python -m venv .venv
+. .venv/bin/activate
+pip install flask pillow
+python -m unittest discover -s tests -p 'test_aooscope_*.py' -v
+bash tests/test_deployment.sh
 ```
 
-### Values stuck at 98 (default)
+Local container build:
+
 ```bash
-# Check sensor mapping
-cat /root/aoostar-rs/cfg/sensor-mapping.cfg
-# Check available values
-cat /root/aoostar-rs/cfg/sensors/values.txt | grep temperature
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
 ```
-
-### apt 401 Unauthorized errors
-You have the enterprise repository enabled without a subscription. Follow step 1 of the installation to fix this.
-
-### Script tteck refuses to run (version detection bug)
-The tteck script may not recognize Proxmox 9.x. Use the manual installation method described above.
-
-### Must compile from source
-The pre-built `asterctl` binary v0.2.0 does not support `--sensor-mapping`. Always compile from the [zehnm/aoostar-rs](https://github.com/zehnm/aoostar-rs) source.
-
----
-
-## 📁 Project Structure
-
-```
-aoostar-proxmox-lcd/
-├── Dockerfile                    # Docker build file
-├── docker-compose.yml            # Docker Compose configuration
-├── start.sh                      # Docker entrypoint script
-├── webui.py                      # Web editor (Flask)
-├── proxmox-sensors.sh            # Proxmox-specific metrics script
-├── cfg/
-│   ├── monitor.json              # Panel configuration
-│   ├── sensor-mapping.cfg        # Sensor label mapping
-│   ├── sensor-mapping-filter.cfg # Sensor filter rules
-│   ├── default_1_index.jpg       # Panel 1 background
-│   ├── default_1_hdd.jpg         # Panel 2 background
-│   └── proxmox_panel.jpg         # Panel 3 background (generated)
-└── README.md
-```
-
----
 
 ## 🙏 Credits
 
-- [zehnm/aoostar-rs](https://github.com/zehnm/aoostar-rs) — Original asterctl project for AOOSTAR LCD control
-- Web editor and Proxmox integration developed with [Claude](https://claude.ai) (Anthropic)
+- [`xavtb78/aoostar-proxmox-lcd`](https://github.com/xavtb78/aoostar-proxmox-lcd) — project this fork started from.
+- [`zehnm/aoostar-rs`](https://github.com/zehnm/aoostar-rs) — reverse-engineered AOOSTAR display protocol and `asterctl`/`aster-sysinfo`.
 
----
-
-## 📄 License
-
-MIT License — feel free to use, modify and share!
-
----
-
-## 🤝 Contributing
-
-Pull requests welcome! If you have improvements, bug fixes, or support for other AOOSTAR models, feel free to contribute.
-
-If this project helped you, give it a ⭐ on GitHub!
+AooScope is independent and is not affiliated with or endorsed by AOOSTAR. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

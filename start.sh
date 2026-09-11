@@ -1,34 +1,19 @@
 #!/bin/bash
-set -u
+set -euo pipefail
+CFG="${AOOSCOPE_CONFIG_DIR_IN_CONTAINER:-/app/cfg}"
+mkdir -p "$CFG/sensors" "$CFG/private" "$CFG/cache" "$CFG/branding"
+if [ ! -e "$CFG/sensor-mapping.cfg" ]; then
+  cp /app/defaults/sensor-mapping.cfg "$CFG/sensor-mapping.cfg"
+fi
 
 echo "=== AooScope ==="
-echo "Starting telemetry, display engine and web UI..."
-
-DEVICE="${AOOSCOPE_DEVICE:-/dev/ttyACM0}"
-CONFIG_FILE="${AOOSCOPE_MONITOR_CONFIG:-monitor.json}"
-
 python3 -m aooscope.telemetry &
-echo "aooscope telemetry started"
-
+echo "telemetry started"
 if command -v aster-sysinfo >/dev/null 2>&1; then
-    aster-sysinfo --refresh "${AOOSCOPE_SYSINFO_SECONDS:-5}" \
-        -o /app/cfg/sensors/system.txt \
-        --temp-dir /app/cfg/sensors/ &
+  aster-sysinfo --refresh "${AOOSCOPE_SYSINFO_SECONDS:-5}" \
+    -o "$CFG/sensors/system.txt" --temp-dir "$CFG/sensors/" &
 fi
-
 sleep 2
-
-if [ -e "$DEVICE" ]; then
-    asterctl \
-        --device "$DEVICE" \
-        --config-dir /app/cfg \
-        --config "$CONFIG_FILE" \
-        --font-dir /app/fonts \
-        --sensor-path /app/cfg/sensors/ \
-        --sensor-mapping /app/cfg/sensor-mapping.cfg &
-    echo "display engine started"
-else
-    echo "display device not found: $DEVICE"
-fi
-
-exec python3 /app/webui.py
+python3 -m aooscope.supervisor &
+echo "display supervisor started"
+exec waitress-serve --listen=0.0.0.0:8765 webui:app

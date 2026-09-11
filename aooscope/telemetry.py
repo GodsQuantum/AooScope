@@ -118,14 +118,17 @@ def atomic_write_state(state, sensor_path, state_path):
 
 
 class PVEClient:
-    def __init__(self, base_url, token_id, token_secret, ca_file=None, timeout=3.0):
+    def __init__(self, base_url, token_id, token_secret, ca_file=None, timeout=3.0, verify_tls=True):
         self.base_url = base_url.rstrip("/")
         self.token_id = token_id
         self.token_secret = token_secret
         self.timeout = float(timeout)
         self.ssl_context = None
         if self.base_url.startswith("https://"):
-            self.ssl_context = ssl.create_default_context(cafile=ca_file) if ca_file else ssl.create_default_context()
+            if verify_tls:
+                self.ssl_context = ssl.create_default_context(cafile=ca_file) if ca_file else ssl.create_default_context()
+            else:
+                self.ssl_context = ssl._create_unverified_context()
 
     def get(self, path, params=None):
         url = self.base_url + "/" + path.lstrip("/")
@@ -243,7 +246,7 @@ def normalize_smart(name, data):
         out["wearout"] = data["wearout"]
     return out
 
-def load_pve_client(base_url, token_file, ca_file=None, timeout=3.0):
+def load_pve_client(base_url, token_file, ca_file=None, timeout=3.0, verify_tls=True):
     data = json.loads(Path(token_file).read_text(encoding="utf-8"))
     return PVEClient(
         base_url,
@@ -251,6 +254,7 @@ def load_pve_client(base_url, token_file, ca_file=None, timeout=3.0):
         data["value"],
         ca_file=ca_file,
         timeout=timeout,
+        verify_tls=verify_tls,
     )
 
 
@@ -322,6 +326,48 @@ class RuntimeCollector:
         return state
 
 
+
+def _split_pve_token(value):
+    value = str(value or "").strip()
+    if value.startswith("PVEAPIToken="):
+        value = value[len("PVEAPIToken="):]
+    if "=" not in value:
+        raise ValueError("Proxmox token must be TOKENID=SECRET")
+    return value.split("=", 1)
+
+
+def build_runtime_collector_from_settings(settings, secrets=None):
+    from aooscope.media import build_media_clients_from_settings
+    from aooscope.providers import normalize_url
+    secrets = secrets or {}
+    providers = (settings or {}).get("providers") or {}
+    pve_client = None
+    pve_node = "pve"
+    pve = providers.get("proxmox") or {}
+    if pve.get("enabled") and pve.get("url"):
+        base = normalize_url(pve["url"])
+        if not base.endswith("/api2/json"):
+            base += "/api2/json"
+        inline_token = secrets.get("proxmox", {}).get("api_token")
+        if inline_token:
+            token_id, token_secret = _split_pve_token(inline_token)
+            pve_client = PVEClient(base, token_id, token_secret, timeout=2.5, verify_tls=pve.get("verify_tls", True))
+        else:
+            token_file = os.getenv("PVE_TOKEN_FILE")
+            if token_file and Path(token_file).is_file():
+                pve_client = load_pve_client(
+                    base, token_file, ca_file=os.getenv("PVE_CA_FILE") or None,
+                    timeout=2.5, verify_tls=pve.get("verify_tls", True),
+                )
+        pve_node = pve.get("node") or "pve"
+    return RuntimeCollector(
+        pve_client=pve_client,
+        pve_node=pve_node,
+        media_clients=build_media_clients_from_settings(settings, secrets),
+        slow_seconds=float(os.getenv("PVE_SLOW_SECONDS", "300")),
+        smart_seconds=float(os.getenv("PVE_SMART_SECONDS", "1800")),
+    )
+
 def _build_runtime_collector():
     pve_client = None
     token_file = os.getenv("PVE_TOKEN_FILE")
@@ -351,12 +397,27 @@ def _build_runtime_collector():
 
 
 def main():
+    from aooscope.runtime_config import combined_signature, load_runtime_settings
+
     interval = max(1.0, float(os.getenv("AOOSCOPE_REFRESH_SECONDS", "5")))
     sensor_path = os.getenv("AOOSCOPE_SENSOR_PATH", "/app/cfg/sensors/aooscope.txt")
     state_path = os.getenv("AOOSCOPE_STATE_PATH", "/app/cfg/state.json")
-    collector = _build_runtime_collector()
+    settings_path = Path(os.getenv("AOOSCOPE_SETTINGS_PATH", "/app/cfg/settings.json"))
+    private_path = Path(os.getenv("AOOSCOPE_PRIVATE_SETTINGS_PATH", "/app/cfg/private/providers.json"))
+    signature = object()
+    collector = None
+
     while True:
         try:
+            current = combined_signature(settings_path, private_path)
+            if current != signature or collector is None:
+                if settings_path.is_file():
+                    settings, secrets = load_runtime_settings(settings_path, private_path)
+                    collector = build_runtime_collector_from_settings(settings, secrets)
+                    print("telemetry settings reloaded", flush=True)
+                else:
+                    collector = _build_runtime_collector()
+                signature = current
             atomic_write_state(collector.collect(), sensor_path, state_path)
         except Exception as exc:
             print(f"aooscope-telemetry error: {type(exc).__name__}: {exc}", flush=True)
