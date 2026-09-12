@@ -162,6 +162,7 @@ function renderLayer(layer){
   else if(layer.type==='badge'){el.style.background=layer.color||'#1b6548';el.style.borderRadius='12px';label.textContent=value}
   else if(layer.type==='sparkline'){el.style.borderBottom=`3px solid ${layer.color||'#35d9ff'}`;label.textContent=value}
   else if(layer.type==='image'){const asset=state.media.find(a=>a.id===layer.asset_id);if(asset?.kind==='image'){const img=document.createElement('img');img.src=`/api/media/${asset.id}/file?r=${asset.revision}`;img.alt=asset.name;img.style.cssText=`width:100%;height:100%;object-fit:${layer.fit||'contain'};pointer-events:none`;el.append(img);label.textContent=''}else label.textContent='IMAGE'}
+  else if(layer.type==='animation'){const asset=state.media.find(a=>a.id===layer.asset_id);if(asset?.kind==='image'){const img=document.createElement('img');img.src=`/api/media/${asset.id}/file?r=${asset.revision}`;img.alt=asset.name;img.className='animation-logo';el.append(img)}const orbit=document.createElement('div');orbit.className='aooscope-orbit';orbit.style.animationDuration=`${Math.max(.5,+layer.speed_seconds||4)}s`;orbit.innerHTML='<i></i>';el.append(orbit);label.textContent=''}
   else {label.textContent=layer.type==='text'?(layer.text||'Text'):value;label.style.fontSize=`${layer.font_size||Math.max(16,Math.min(64,layer.height*.55))}px`}
   el.append(label);const handle=document.createElement('i');handle.className='resize-handle';el.append(handle);bindLayerPointer(el,handle,layer);return el;
 }
@@ -189,13 +190,27 @@ function renderSensorPalette(){
 }
 function renderInspector(){
   const root=$('#inspectorBody'),layer=selected();if(!layer){root.innerHTML='<span class="muted">Select a layer</span>';return}
-  root.innerHTML=`<label>Type<select id="iType">${['text','value','bar','gauge','ring','badge','image','sparkline'].map(t=>`<option ${t===layer.type?'selected':''}>${t}</option>`).join('')}</select></label>
+  const fitField=(layer.type==='image'||layer.type==='animation')?`<label>Fit<select id="iFit"><option ${layer.fit==='contain'?'selected':''}>contain</option><option ${layer.fit==='cover'?'selected':''}>cover</option></select></label>`:'';
+  const speedField=layer.type==='animation'?`<label>Orbit speed (s)<input id="iSpeed" type="number" min="0.5" max="20" step="0.5" value="${layer.speed_seconds||4}"></label>`:'';
+  root.innerHTML=`<label>Type<select id="iType">${['text','value','bar','gauge','ring','badge','image','sparkline','animation'].map(t=>`<option ${t===layer.type?'selected':''}>${t}</option>`).join('')}</select></label>
   <div class="form-grid"><label>X<input id="iX" type="number" value="${layer.x}"></label><label>Y<input id="iY" type="number" value="${layer.y}"></label><label>W<input id="iW" type="number" value="${layer.width}"></label><label>H<input id="iH" type="number" value="${layer.height}"></label></div>
-  <label>Z<input id="iZ" type="number" value="${layer.z||0}"></label>${layer.type==='image'?`<label>Fit<select id="iFit"><option ${layer.fit==='contain'?'selected':''}>contain</option><option ${layer.fit==='cover'?'selected':''}>cover</option></select></label>`:''}<label>Color<input id="iColor" type="color" value="${layer.color||'#ffffff'}"></label><label>Unit<input id="iUnit" value="${esc(layer.unit||'')}"></label><label>Binding<input id="iBinding" value="${esc(layer.binding||'')}"></label><label>Opacity<input id="iOpacity" type="range" min="0" max="1" step="0.05" value="${layer.opacity??1}"></label><button id="removeLayer" class="btn danger wide">Delete layer</button>`;
-  $('#iType').onchange=e=>setLayerType(layer.id,e.target.value);$('#iZ').onchange=e=>setLayerZ(layer.id,+e.target.value);if($('#iFit'))$('#iFit').onchange=e=>updateLayer({...selected(),fit:e.target.value});
+  <label>Z<input id="iZ" type="number" value="${layer.z||0}"></label>${fitField}${speedField}<label>Color<input id="iColor" type="color" value="${layer.color||'#ffffff'}"></label><label>Unit<input id="iUnit" value="${esc(layer.unit||'')}"></label><label>Binding<input id="iBinding" value="${esc(layer.binding||'')}"></label><label>Opacity<input id="iOpacity" type="range" min="0" max="1" step="0.05" value="${layer.opacity??1}"></label><button id="removeLayer" class="btn danger wide">Delete layer</button>`;
+  $('#iType').onchange=e=>setLayerType(layer.id,e.target.value);$('#iZ').onchange=e=>setLayerZ(layer.id,+e.target.value);if($('#iFit'))$('#iFit').onchange=e=>updateLayer({...selected(),fit:e.target.value});if($('#iSpeed'))$('#iSpeed').onchange=e=>updateLayer({...selected(),speed_seconds:+e.target.value});
   ['X','Y','W','H'].forEach(k=>$('#i'+k).onchange=()=>{const l=selected();if(k==='X'||k==='Y')moveLayer(l.id,+$('#iX').value,+$('#iY').value);else resizeLayer(l.id,+$('#iW').value,+$('#iH').value)});
   ['Color','Unit','Binding','Opacity'].forEach(k=>$('#i'+k).oninput=e=>{const l=selected();const key={Color:'color',Unit:'unit',Binding:'binding',Opacity:'opacity'}[k];updateLayer({...l,[key]:key==='opacity'?+e.target.value:e.target.value})});
   $('#removeLayer').onclick=()=>{state.currentPage=removeLayer(state.currentPage,layer.id);state.selectedLayer=null;renderCanvas(state.currentPage);renderInspector();markDraft()};
+}
+
+async function applyCarousel(){
+  try{
+    if(state.currentPage) await saveCurrentPage();
+    if(state.pages) await saveCarousel();
+    const result=await api('/api/apply',{method:'POST',body:'{}'});
+    $('#draftStatus').textContent=`Applied ${result.revision_id}`;
+    $('#draftStatus').className='status ok';
+    toast(result.warnings?.length?`Applied with ${result.warnings.length} warning(s)`:'Applied to LCD');
+    return result;
+  }catch(err){toast(`Apply failed: ${err.message}`,true);throw err}
 }
 
 async function loadMedia(){
@@ -203,12 +218,13 @@ async function loadMedia(){
 }
 function mediaThumb(asset){return asset.kind==='image'?`<img src="/api/media/${asset.id}/file?r=${asset.revision}" alt="">`:`<div class="media-source">${esc(asset.format||'MEDIA')}</div>`}
 function renderMediaLibrary(){
-  const root=$('#mediaLibrary');root.innerHTML='';state.media.forEach(asset=>{const card=document.createElement('article');card.className='media-card';card.draggable=true;card.dataset.assetId=asset.id;card.innerHTML=`<div class="media-thumb">${mediaThumb(asset)}</div><strong>${esc(asset.name)}</strong><small>${esc(asset.format)} ${asset.width?asset.width+'×'+asset.height:''} · r${asset.revision}</small><div class="page-actions"><label class="btn mini">Replace<input class="replace-file" type="file" hidden></label><button class="btn mini danger delete-media">Delete</button></div>`;card.ondragstart=e=>e.dataTransfer.setData('application/json',JSON.stringify({kind:'media',asset_id:asset.id}));$('.replace-file',card).onchange=e=>{if(e.target.files[0])replaceAsset(asset.id,e.target.files[0])};$('.delete-media',card).onclick=()=>deleteAsset(asset.id);root.append(card)})
+  const root=$('#mediaLibrary');root.innerHTML='';state.media.forEach(asset=>{const card=document.createElement('article');card.className='media-card';card.draggable=true;card.dataset.assetId=asset.id;card.innerHTML=`<div class="media-thumb">${mediaThumb(asset)}</div><strong>${esc(asset.name)}</strong><small>${esc(asset.format)} ${asset.width?asset.width+'×'+asset.height:''} · r${asset.revision}</small><div class="page-actions"><label class="btn mini">Replace<input class="replace-file" type="file" hidden></label><button class="btn mini animate-media">Animate</button><button class="btn mini danger delete-media">Delete</button></div>`;card.ondragstart=e=>e.dataTransfer.setData('application/json',JSON.stringify({kind:'media',asset_id:asset.id}));$('.replace-file',card).onchange=e=>{if(e.target.files[0])replaceAsset(asset.id,e.target.files[0])};$('.animate-media',card).onclick=()=>animateAsset(asset.id);$('.delete-media',card).onclick=()=>deleteAsset(asset.id);root.append(card)})
 }
 function renderMediaPalette(){const root=$('#mediaPalette');root.innerHTML='';state.media.forEach(asset=>{const el=document.createElement('div');el.className='palette-item';el.draggable=true;el.innerHTML=`${asset.kind==='image'?'▧':'▶'} ${esc(asset.name)}`;el.ondragstart=e=>e.dataTransfer.setData('application/json',JSON.stringify({kind:'media',asset_id:asset.id}));root.append(el)})}
 async function uploadMedia(files){for(const file of files){const fd=new FormData();fd.append('file',file);await api('/api/media',{method:'POST',body:fd})}await loadMedia();toast(`${files.length} media uploaded`)}
 async function replaceAsset(assetId,file){const fd=new FormData();fd.append('file',file);await api(`/api/media/${assetId}`,{method:'PUT',body:fd});await loadMedia();renderCanvas(state.currentPage);toast('Media replaced')}
 async function deleteAsset(assetId){if(!confirm('Delete this media?'))return;try{await api(`/api/media/${assetId}`,{method:'DELETE'});await loadMedia();toast('Media deleted')}catch(err){toast(err.data?.error==='asset_in_use'?'Media is used by a page':err.message,true)}}
+function animateAsset(assetId,x=80,y=50){if(!state.currentPage)return null;const layer=makeLayerModel('animation',null,x,y);layer.asset_id=assetId;layer.animation='orbit';layer.fit='contain';layer.speed_seconds=4;layer.width=300;layer.height=260;layer.color='#35d9ff';state.currentPage={...state.currentPage,layers:[...(state.currentPage.layers||[]),layer]};state.selectedLayer=layer.id;renderCanvas(state.currentPage);renderInspector();markDraft();toast('Animated logo layer added');return layer}
 function placeAsset(assetId,x=80,y=80){if(!state.currentPage)return null;const layer=makeLayerModel('image',null,x,y);layer.asset_id=assetId;layer.fit='contain';layer.width=260;layer.height=180;state.currentPage={...state.currentPage,layers:[...(state.currentPage.layers||[]),layer]};state.selectedLayer=layer.id;renderCanvas(state.currentPage);renderInspector();markDraft();return layer}
 async function previewCurrentPage(){if(!state.currentPage)return null;const r=await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:state.currentPage})});if(!r.ok)throw new Error(`Preview failed ${r.status}`);const blob=await r.blob(),url=URL.createObjectURL(blob);const win=window.open('','aooscope-preview','width=1000,height=460');if(win){win.document.body.style.cssText='margin:0;background:#000;display:grid;place-items:center;height:100vh';const img=win.document.createElement('img');img.src=url;img.style.maxWidth='96vw';img.style.imageRendering='auto';win.document.body.append(img)}return url}
 
@@ -218,7 +234,7 @@ async function loadBase(){
   await Promise.all([loadPages(),loadMedia(),refreshStatus()]);
 }
 function bindUi(){
-  setupTabs();$('#addPage').onclick=()=>createPage();$('#mediaUpload').onchange=e=>uploadMedia([...e.target.files]);$('#previewPage').onclick=()=>previewCurrentPage().catch(err=>toast(err.message,true));$('#saveCarousel').onclick=()=>saveCarousel();$('#saveSettings').onclick=()=>saveSettings(true);$('#saveProviders').onclick=()=>saveSettings(true);$('#addSchedule').onclick=()=>$('#schedule').append(scheduleRow());$('#brightness').oninput=e=>applyBrightness(e.target.value);
+  setupTabs();$('#addPage').onclick=()=>createPage();$('#mediaUpload').onchange=e=>uploadMedia([...e.target.files]);$('#previewPage').onclick=()=>previewCurrentPage().catch(err=>toast(err.message,true));$('#applyCarousel').onclick=()=>applyCarousel().catch(()=>{});$('#saveCarousel').onclick=()=>saveCarousel();$('#saveSettings').onclick=()=>saveSettings(true);$('#saveProviders').onclick=()=>saveSettings(true);$('#addSchedule').onclick=()=>$('#schedule').append(scheduleRow());$('#brightness').oninput=e=>applyBrightness(e.target.value);
   document.addEventListener('keydown',e=>{if(!state.selectedLayer||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName))return;e.preventDefault();const layer=selected(),step=e.shiftKey?10:1,dx=e.key==='ArrowLeft'?-1:e.key==='ArrowRight'?1:0,dy=e.key==='ArrowUp'?-1:e.key==='ArrowDown'?1:0;updateLayer(nudgeModel(layer,dx,dy,step))});
 }
 window.addEventListener('DOMContentLoaded',()=>{bindUi();loadBase().catch(err=>toast(err.message,true));setInterval(()=>refreshStatus().catch(()=>{}),5000)});

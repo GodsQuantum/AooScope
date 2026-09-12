@@ -13,6 +13,9 @@ from PIL import Image, ImageOps, ImageDraw, ImageEnhance
 
 from aooscope.panels import build_monitor_config, generate_backgrounds, generate_splash
 from aooscope.settings import load_settings, load_secrets, effective_brightness
+from aooscope.page_compiler import compile_document
+from aooscope.media_library import MediaLibrary
+from aooscope.revisions import RevisionManager
 
 ACTIVE_MODES = {"playing", "incoming", "landed"}
 
@@ -209,6 +212,8 @@ class DisplaySupervisor:
         self.proc = None
         self.signature = object()
         self.running = True
+        self.active_config_dir = self.config_dir
+        self.active_monitor_path = self.monitor_path
 
     def load_promoted_revision(self):
         pointer = self.config_dir / "compiled" / "current.json"
@@ -239,11 +244,13 @@ class DisplaySupervisor:
             "splash_image": self.splash,
         }
 
-    def _cmd(self):
+    def _cmd(self, config_dir=None, monitor_path=None):
+        config_dir = Path(config_dir or self.active_config_dir)
+        monitor_path = Path(monitor_path or self.active_monitor_path)
         return [
             "asterctl", "--device", self.device,
-            "--config-dir", str(self.config_dir),
-            "--config", self.monitor_path.name,
+            "--config-dir", str(config_dir),
+            "--config", monitor_path.name,
             "--font-dir", "/app/fonts",
             "--sensor-path", str(self.config_dir / "sensors"),
             "--sensor-mapping", str(self.config_dir / "sensor-mapping.cfg"),
@@ -257,22 +264,66 @@ class DisplaySupervisor:
                 self.proc.kill(); self.proc.wait(timeout=2)
         self.proc = None
 
-    def start_display(self):
+    def start_display(self, config_dir=None, monitor_path=None):
+        if config_dir is not None:
+            self.active_config_dir = Path(config_dir)
+        if monitor_path is not None:
+            self.active_monitor_path = Path(monitor_path)
         if not Path(self.device).exists():
             print(f"display device not found: {self.device}", flush=True)
             return
         self.proc = subprocess.Popen(self._cmd())
         print(f"display engine pid={self.proc.pid}", flush=True)
 
+    def _prepare_promoted(self, promoted, brightness):
+        config_dir = Path(promoted["config_dir"])
+        source = config_dir / "source-pages.json"
+        if source.is_file():
+            try:
+                doc = json.loads(source.read_text(encoding="utf-8"))
+                result = compile_document(
+                    doc, _read_state(self.state_path), MediaLibrary(self.config_dir),
+                    config_dir, brightness=brightness,
+                )
+                _atomic_json(config_dir / "monitor.json", result.monitor_config)
+            except Exception as exc:
+                print(f"promoted compile failed: {exc}", flush=True)
+                raise
+        return config_dir, config_dir / "monitor.json"
+
     def apply(self, event, force=False):
         _atomic_text(self.media_sensor_path, media_sensor_lines(event))
         profile = self.current_display_profile()
         brightness = profile["brightness"]
+        promoted = self.load_promoted_revision() if not event else None
+        if promoted:
+            sig = ("promoted", promoted.get("revision_id"), int(brightness), promoted.get("promoted_unix"))
+            if not force and sig == self.signature:
+                return
+            try:
+                config_dir, monitor_path = self._prepare_promoted(promoted, brightness)
+                self.signature = sig
+                self.stop_display(); self.start_display(config_dir, monitor_path)
+                time.sleep(0.35)
+                if self.proc and self.proc.poll() is not None:
+                    raise RuntimeError(f"asterctl exited rc={self.proc.returncode}")
+                print(f"display profile=custom revision={promoted.get('revision_id')} brightness={brightness}", flush=True)
+                return
+            except Exception as exc:
+                manager = RevisionManager(self.config_dir)
+                try:
+                    manager.mark_failed(promoted.get("revision_id"), str(exc))
+                    self.signature = object()
+                    return self.apply(None, force=True)
+                except Exception:
+                    print(f"custom display rollback failed: {exc}", flush=True)
         sig = profile_signature(
             event, brightness, profile["brand"], profile["switch_seconds"], profile["splash_image"]
         )
         if not force and sig == self.signature:
             return
+        self.active_config_dir = self.config_dir
+        self.active_monitor_path = self.monitor_path
         generate_backgrounds(self.config_dir, brand=profile["brand"], brightness=brightness)
         secrets = load_secrets(self.private_path)
         image = _media_background(self.config_dir, event, brightness, secrets) if event else "aooscope/media.jpg"

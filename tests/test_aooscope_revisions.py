@@ -30,6 +30,7 @@ class RevisionManagerTests(unittest.TestCase):
         rid = self.manager.stage({"revision":2}, {}, fake_compiler)
         staged = self.root / "compiled" / rid
         self.assertTrue((staged / "monitor.json").is_file())
+        self.assertEqual(json.loads((staged / 'source-pages.json').read_text())['revision'], 2)
         self.manager.promote(rid)
         current = self.manager.current()
         self.assertEqual(current["revision_id"], rid)

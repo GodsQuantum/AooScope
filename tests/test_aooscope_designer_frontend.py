@@ -53,6 +53,19 @@ class DesignerFrontendTests(unittest.TestCase):
         self.assertIn("layer.fit='contain'", js)
         self.assertIn('/api/media', js)
 
+    def test_apply_button_is_wired_to_apply_api(self):
+        js = self.client.get('/static/admin.js').get_data(as_text=True)
+        self.assertIn('function applyCarousel', js)
+        self.assertIn("api('/api/apply'", js)
+        self.assertIn("$('#applyCarousel').onclick", js)
+
+    def test_logo_animation_is_available_in_designer(self):
+        js=self.client.get('/static/admin.js').get_data(as_text=True)
+        css=self.client.get('/static/admin.css').get_data(as_text=True)
+        self.assertIn('function animateAsset', js)
+        self.assertIn("layer.animation='orbit'", js)
+        self.assertIn('aooscope-orbit', css)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -53,3 +53,8 @@ Generated files may be recreated. `settings.json`, `private/` and custom `brandi
 ## Security boundaries
 
 AooScope does not need the Docker socket, host networking, `privileged: true`, or arbitrary host filesystem mounts. Hardware access is limited to the configured serial LCD device. Provider APIs should use read-only accounts/tokens wherever possible.
+
+
+## Page designer pipeline
+
+`pages.json` is the normalized source of carousel drafts. `media.json` + `media/` hold reusable assets. `page_compiler.py` converts an applied document into `compiled/<revision>/monitor.json` and assets. `current.json` / `previous.json` provide atomic promotion and rollback. The display supervisor owns `asterctl`; drafts never touch the LCD until Apply. `animation_runtime.py` writes bounded synthetic phase sensors for native partial-update animations.

@@ -36,6 +36,14 @@ It is a fork and substantial rewrite of `xavtb78/aoostar-proxmox-lcd`, while kee
 
 > **Brightness note:** no documented native WTR MAX backlight command is currently exposed by `aoostar-rs`. AooScope brightness is therefore software luminance: it scales the rendered pixels, not the physical backlight power.
 
+## 🧩 Visual Page Designer
+
+AooScope 0.2 adds a 960×376 WYSIWYG editor in the Admin UI. Create, duplicate, reorder, enable/disable and delete carousel pages; drag live sensors onto the canvas; choose value, bar, gauge, ring, badge or sparkline widgets; upload reusable media; preview drafts; and apply atomically to the LCD with rollback.
+
+Images can be reused across pages. **Animate** turns a logo into an orbital HTML/CSS preview; on the WTR MAX the orbit is driven by a synthetic sensor and `aoostar-rs` partial updates (default 5 FPS, capped at 8 FPS) instead of full-frame video. Uploaded GIF/video files are accepted as animation sources, but full-frame high-FPS playback is intentionally not used on the serial LCD.
+
+Edits are drafts until **Apply to LCD**. Brightness schedules re-render the last applied revision without promoting unpublished drafts.
+
 ## 🚀 Quick start
 
 Requirements:

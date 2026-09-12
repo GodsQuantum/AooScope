@@ -47,3 +47,8 @@ docker compose up -d
 ```
 
 Keep the `data/` directory when replacing containers; it contains settings, provider secrets and custom branding.
+
+
+## Persistent designer data
+
+Keep the entire `/app/cfg` volume persistent. In addition to settings and provider secrets, AooScope 0.2 stores `pages.json`, `media.json`, `media/`, and `compiled/`. Existing custom splash images are imported into the Media Library on first designer migration; existing settings and secrets are not rewritten.
