@@ -25,6 +25,21 @@ This is a compatibility-first migration, not a clean-slate rewrite.
 - No arbitrary user JavaScript execution.
 - No provider credential exposure to the frontend.
 
+## September 2026 Technology Baseline
+
+The migration targets stable releases current as of September 12, 2026, avoiding development/pre-release dependencies in production:
+
+- Rust 1.98.1 toolchain, pinned with `rust-toolchain.toml`; 1.98.0 is not accepted because 1.98.1 fixes a vtable miscompilation.
+- Axum 0.8.9 with Tower/Tower HTTP middleware; Tower HTTP 0.7.1 where dependency compatibility permits.
+- Reqwest 0.13.5 with Rustls TLS; Rustls 0.23.44 stable, not the 0.24 development line.
+- Serde 1.0.229 and explicit schema-versioned JSON models.
+- Svelte 5 runes with SvelteKit and `@sveltejs/adapter-static` 3.0.10.
+- Vite 8.1 using its Rolldown-based production pipeline; experimental bundled dev mode remains disabled unless profiling proves a benefit.
+- Vitest 5 for frontend unit/component tests and Playwright 1.63 for browser tests.
+- cargo-nextest 0.9.144 for Rust CI test execution; cargo-llvm-cov 0.9.x for dedicated coverage jobs.
+
+Version floors are refreshed deliberately, not automatically. Lockfiles are committed and release/CI builds use `cargo --locked` and `pnpm --frozen-lockfile`.
+
 ## Target Architecture
 
 A Cargo workspace provides the backend and shared domain model. Svelte is built as a static SPA and embedded into the Rust server.
@@ -58,7 +73,9 @@ Production contains one main `aooscope` process. Background work runs as Tokio t
 
 ## Frontend Choice
 
-Use SvelteKit with `adapter-static` in SPA mode. Axum serves the generated static output. There is no Node.js server in production.
+Use SvelteKit with `adapter-static` as a prerendered static application. The root admin shell and any declared static routes are prerendered; no generic SPA fallback is generated initially. Axum serves the generated static output. There is no Node.js server in production.
+
+Use Svelte 5 runes (`$state`, `$derived`, `$effect` only for true side effects). Page/editor selection that must survive reloads is represented in query/hash state rather than requiring server-side dynamic routes. The WYSIWYG uses Pointer Events plus CSS transforms during active drag/resize, schedules visual updates with `requestAnimationFrame`, and commits logical 960x376 geometry on pointer-up. Avoid a heavyweight canvas/editor dependency unless profiling proves it necessary.
 
 The frontend owns presentation and interaction only:
 
@@ -72,7 +89,7 @@ The frontend owns presentation and interaction only:
 
 The backend remains authoritative for validation, compilation, persistence, secrets, provider access and LCD state.
 
-Rust domain types are exported to TypeScript with `ts-rs` so Svelte does not hand-maintain duplicate API models.
+The HTTP contract is generated from Rust using Utoipa OpenAPI. An `xtask api-schema` command emits the canonical OpenAPI document, and `openapi-typescript` generates frontend TypeScript definitions. The Svelte client uses a small project-local typed `fetch` wrapper; `openapi-fetch` is intentionally not adopted. `ts-rs` is not required unless a future non-HTTP shared model justifies it.
 
 ## Compatibility Contracts
 
@@ -112,11 +129,11 @@ The Rust server initially preserves the existing route surface and response sema
 - `POST /api/apply`
 - `GET /api/health`
 
-New live UI updates may use WebSocket or SSE, but REST remains the durable control plane.
+`GET /api/events` provides Server-Sent Events for one-way telemetry/display/status updates. REST remains the durable control plane. WebSocket is reserved for a future genuinely bidirectional low-latency feature and is not part of the initial migration.
 
 ## Data Integrity and Revisions
 
-All persistent JSON writes are atomic: write temporary file, fsync, rename. Schema versions remain explicit.
+All persistent JSON writes are crash-consistent: write a temporary file in the destination directory, flush and fsync it, rename atomically, then fsync the parent directory. Schema versions remain explicit.
 
 Page editing keeps the existing model:
 
@@ -131,7 +148,9 @@ Brightness changes re-render the currently applied revision and never implicitly
 
 ## Rendering and Media
 
-The Rust renderer must preserve the current logical 960x376 canvas and widget behavior. Rendering uses Rust-native image/SVG libraries where practical. FFmpeg remains an external helper for video frame extraction rather than adding heavy unsafe bindings.
+The Rust renderer must preserve the current logical 960x376 canvas and widget behavior. Rendering uses Rust-native libraries (`image`/`imageproc` as appropriate, `resvg`/`tiny-skia` for SVG). FFmpeg remains an external helper for bounded video frame extraction rather than adding heavy unsafe bindings.
+
+CPU-heavy decoding, rasterization and rendering never run on Tokio core worker threads. They run through `spawn_blocking` behind a bounded semaphore. Image decoders use explicit byte/pixel limits; potentially panicking decoder calls are isolated with unwind-safe error conversion. FFmpeg/helper subprocesses have input limits and hard execution timeouts.
 
 Supported layer behavior remains compatible with the current page model:
 
@@ -147,7 +166,7 @@ Media uploads keep content-based validation, generated storage names, SHA-256 me
 
 ## Display and Animation
 
-The final runtime links `aoostar-rs` directly as a Rust dependency. The compatibility phase may temporarily keep the CLI path for A/B comparison, but the target has no child `asterctl` process.
+The final runtime links the exact tested `aoostar-rs` Git commit directly as a Rust dependency, wrapped behind an internal `DisplayDriver` trait. The compatibility phase may temporarily provide both a CLI-backed adapter and a direct-library adapter for deterministic A/B comparison, but the target has no child `asterctl` process. Updating the pinned protocol implementation requires simulator and physical-LCD gates.
 
 Animation uses small partial LCD updates. The animation scheduler owns a bounded update budget and never streams full-screen video at uncontrolled frame rates.
 
@@ -155,9 +174,9 @@ The browser may render richer CSS/SVG previews, but every LCD animation must com
 
 ## Providers and Telemetry
 
-Tokio tasks collect sysfs and provider data on independent cadences. One failing provider cannot stall the telemetry loop. Secrets stay server-side and public API models expose only masked/set-state metadata.
+Tokio tasks collect sysfs and provider data on independent cadences. One failing provider cannot stall the telemetry loop. Snapshot state is distributed internally with `tokio::sync::watch` (and bounded broadcast only where event history is required), feeding both SSE and the display engine without filesystem polling. Secrets stay server-side and public API models expose only masked/set-state metadata.
 
-Provider clients use explicit connect/read timeouts, TLS verification by default, optional configured CA files, and bounded retry/backoff.
+Provider clients reuse long-lived `reqwest::Client` instances for connection pooling, with explicit connect/read/total timeouts, TLS verification by default, optional configured CA files, and bounded retry/backoff.
 
 ## Migration Strategy
 
@@ -192,6 +211,8 @@ Provider failures are isolated. Display failures trigger revision rollback where
 - API writes validate payload size and schema.
 - Default deployment remains LAN/VPN scoped unless explicit authentication is configured.
 - Container keeps `no-new-privileges` and minimal filesystem/device access.
+- Rust dependencies are checked with `cargo audit`/`cargo deny`; release GitHub Actions are pinned to immutable commit SHAs.
+- Stable crate releases are preferred; prerelease Rust dependencies require an explicit documented exception.
 
 ## Testing Strategy
 
@@ -202,8 +223,9 @@ Parity is proven at multiple levels:
 - Golden image/config tests for page compilation.
 - Recorded provider fixtures for deterministic client tests.
 - API contract tests comparing Rust responses with the reference behavior.
-- Vitest component/model tests for editor operations.
-- Playwright browser smoke tests for page CRUD, media, providers, preview and apply.
+- Vitest 5 component/model tests for editor operations.
+- Playwright 1.63 browser smoke tests for page CRUD, media, providers, preview and apply, using `locator.drop()` for real DataTransfer/file drag-and-drop paths.
+- cargo-nextest for normal Rust CI test execution; cargo-llvm-cov runs in a separate coverage job so instrumentation does not slow every PR gate.
 - `aoostar-rs` simulation tests before physical display tests.
 - Physical LCD validation only after all software gates are green.
 
@@ -211,7 +233,13 @@ A migration test copies a representative existing appdata tree, starts the Rust 
 
 ## Build and Packaging
 
-The development build has two toolchains: Cargo and Node. Node is build-only.
+The development build has two toolchains: Cargo and Node/pnpm. Node is build-only. A workspace `xtask` crate provides stable entry points such as `cargo xtask api-schema`, `cargo xtask check` and `cargo xtask dist` so local and CI builds execute the same orchestration.
+
+Frontend production builds use Vite 8.1/Rolldown. SvelteKit `adapter-static` prerenders the admin and generates Brotli + gzip assets. `rust-embed-for-web` embeds those precompressed assets with precomputed cache metadata; hashed Vite assets are served with immutable caching while the HTML entry document revalidates/no-caches. Zstd embedding stays disabled to avoid unnecessary native complexity for this small UI.
+
+Docker uses BuildKit cache mounts for Cargo registry/git/target and pnpm stores as the baseline, plus external registry/GHA cache in CI. `sccache` 0.17 is used for local/CI Rust compilation where useful; `mold` 2.41 is preferred for Linux development/CI linking when available. `cargo-chef` is optional and is only added if measured Docker timings improve beyond BuildKit cache mounts.
+
+Release builds use `opt-level = 3`, `lto = "thin"`, `codegen-units = 1`, symbol stripping, and panic unwinding. Public images remain generic x86_64 rather than `target-cpu=native`; machine-specific tuning may be an explicitly separate local artifact.
 
 A multi-stage container builds Svelte, builds the Rust binary with the Svelte output embedded, then copies the binary plus only required runtime helpers/libraries into the final image.
 
