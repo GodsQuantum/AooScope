@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "assets": {
+    "fixture-image": {
+      "id": "fixture-image",
+      "name": "fixture.png",
+      "stored_name": "fixture-image-r1.png",
+      "kind": "image",
+      "format": "PNG",
+      "width": 320,
+      "height": 180,
+      "size": 1024,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "revision": 1
+    }
+  }
+}
