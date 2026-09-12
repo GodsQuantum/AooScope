@@ -22,6 +22,7 @@ COPY --from=builder /src/aoostar-rs/fonts/ /app/fonts/
 COPY defaults/ /app/defaults/
 COPY aooscope/ /app/aooscope/
 COPY webui.py start.sh /app/
+COPY web/ /app/web/
 RUN chmod 0755 /app/start.sh
 WORKDIR /app
 ENV PYTHONPATH=/app PYTHONUNBUFFERED=1

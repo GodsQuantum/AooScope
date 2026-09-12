@@ -15,10 +15,9 @@ class AooScopeWebTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_inline_javascript_has_no_quote_artifact(self):
-        response = self.client.get("/")
-        text = response.get_data(as_text=True)
-        script = text.split("<script>", 1)[1].split("</script>", 1)[0]
+    def test_admin_javascript_has_no_quote_artifact(self):
+        response = self.client.get("/static/admin.js")
+        script = response.get_data(as_text=True)
         self.assertFalse(script.lstrip().startswith("\'\'\'"), script[:80])
         self.assertIn("const providerMeta", script)
 
@@ -36,7 +35,7 @@ class AooScopeWebTests(unittest.TestCase):
         self.assertIn("no-store", response.headers.get("Cache-Control", ""))
 
     def test_brightness_slider_is_live_bound(self):
-        text = self.client.get("/").get_data(as_text=True)
+        text = self.client.get("/static/admin.js").get_data(as_text=True)
         self.assertIn("function applyBrightness", text)
         self.assertIn("oninput=e=>applyBrightness", text)
 

@@ -19,3 +19,6 @@ check "healthcheck covers telemetry/display/UI" "grep -Fq 'aooscope.telemetry' c
 check "no legacy host helper is shipped" "test ! -e proxmox-sensors.sh"
 check "local data is gitignored" "grep -Fxq 'data/' .gitignore && grep -Fxq '.venv/' .gitignore"
 exit "$fail"
+
+node --check web/admin.js >/dev/null
+pass 'admin javascript syntax is valid'
