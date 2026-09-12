@@ -1,3 +1,4 @@
+import {normalizePage,makeLayer as makeLayerModel,moveLayer as moveLayerModel,resizeLayer as resizeLayerModel,setLayerType as setLayerTypeModel,setLayerZ as setLayerZModel,nudge as nudgeModel,clientToLogical,replaceLayer,removeLayer} from './designer-model.js';
 const $ = (s, root=document) => root.querySelector(s);
 const $$ = (s, root=document) => [...root.querySelectorAll(s)];
 const state = {settings:{}, pages:null, currentPage:null, sensors:[], media:[], selectedLayer:null};
@@ -32,9 +33,11 @@ async function loadPages(){
 }
 async function selectPage(id){
   state.currentPage = await api(`/api/pages/${id}`);
+  state.selectedLayer = null;
   $('#pageTitle').textContent = state.currentPage.name;
   renderPageList();
   renderCanvas(state.currentPage);
+  renderInspector();
   return state.currentPage;
 }
 async function createPage(templateId=null){
@@ -131,16 +134,77 @@ function applyBrightness(value){
   $('#brightnessLabel').textContent=`${value}%`;clearTimeout(brightnessTimer);
   brightnessTimer=setTimeout(async()=>{try{await saveSettings(false,{display:{brightness:+value}});const s=await refreshStatus();toast(`Brightness ${s.brightness}% applied to LCD`)}catch(err){toast(err.message,true)}},250);
 }
+function sensorByKey(key){return state.sensors.find(item=>item.key===key)||null}
+function displayValue(layer){const sensor=sensorByKey(layer.binding);const value=sensor?.value;if(value===null||value===undefined)return layer.fallback??'--';const decimals=Number.isInteger(value)?0:1;return `${typeof value==='number'?value.toFixed(decimals):value}${layer.unit||sensor?.unit||''}`}
+function markDraft(){const el=$('#draftStatus');el.textContent='Draft changed';el.className='status';clearTimeout(markDraft._t);markDraft._t=setTimeout(()=>saveCurrentPage().catch(err=>toast(err.message,true)),550)}
+function selected(){return state.currentPage?.layers?.find(layer=>layer.id===state.selectedLayer)||null}
+function updateLayer(updated){state.currentPage=replaceLayer(state.currentPage,updated);state.selectedLayer=updated.id;renderCanvas(state.currentPage);renderInspector();markDraft();return updated}
+
+function addLayer(kind,binding=null,x=80,y=80){
+  if(!state.currentPage)return null;
+  const layer=makeLayerModel(kind,binding,x,y);state.currentPage={...state.currentPage,layers:[...(state.currentPage.layers||[]),layer]};state.selectedLayer=layer.id;renderCanvas(state.currentPage);renderInspector();markDraft();return layer;
+}
+function moveLayer(id,x,y){const layer=state.currentPage.layers.find(x=>x.id===id);return layer?updateLayer(moveLayerModel(layer,x,y,5)):null}
+function resizeLayer(id,w,h){const layer=state.currentPage.layers.find(x=>x.id===id);return layer?updateLayer(resizeLayerModel(layer,w,h,5)):null}
+function setLayerType(id,type){const layer=state.currentPage.layers.find(x=>x.id===id);return layer?updateLayer(setLayerTypeModel(layer,type)):null}
+function setLayerZ(id,z){const layer=state.currentPage.layers.find(x=>x.id===id);return layer?updateLayer(setLayerZModel(layer,z)):null}
+async function saveCurrentPage(){
+  if(!state.currentPage)return null;
+  const saved=await api(`/api/pages/${state.currentPage.id}`,{method:'PUT',body:JSON.stringify(state.currentPage)});state.currentPage=saved;$('#draftStatus').textContent='Draft saved';await loadPages();return saved;
+}
+
+function renderLayer(layer){
+  const el=document.createElement('div');el.className='layer'+(state.selectedLayer===layer.id?' selected':'');el.dataset.layerId=layer.id;
+  Object.assign(el.style,{left:`${layer.x}px`,top:`${layer.y}px`,width:`${layer.width}px`,height:`${layer.height}px`,zIndex:String(layer.z??0),opacity:String(layer.opacity??1),color:layer.color||'#fff'});
+  const label=document.createElement('div');label.className='layer-label';const value=displayValue(layer);
+  if(layer.type==='gauge'||layer.type==='ring'){el.style.border=`12px solid ${layer.color||'#35d9ff'}`;el.style.borderRadius='999px';label.textContent=value}
+  else if(layer.type==='bar'){el.style.background='#203144';const fill=document.createElement('div');fill.style.cssText=`height:100%;width:${Math.max(0,Math.min(100,+sensorByKey(layer.binding)?.value||0))}%;background:${layer.color||'#35d9ff'}`;el.append(fill);label.textContent=value}
+  else if(layer.type==='badge'){el.style.background=layer.color||'#1b6548';el.style.borderRadius='12px';label.textContent=value}
+  else if(layer.type==='sparkline'){el.style.borderBottom=`3px solid ${layer.color||'#35d9ff'}`;label.textContent=value}
+  else if(layer.type==='image'){label.textContent='IMAGE'}
+  else {label.textContent=layer.type==='text'?(layer.text||'Text'):value;label.style.fontSize=`${layer.font_size||Math.max(16,Math.min(64,layer.height*.55))}px`}
+  el.append(label);const handle=document.createElement('i');handle.className='resize-handle';el.append(handle);bindLayerPointer(el,handle,layer);return el;
+}
+function bindLayerPointer(el,handle,layer){
+  el.addEventListener('pointerdown',ev=>{
+    state.selectedLayer=layer.id;renderCanvas(state.currentPage);renderInspector();
+    const canvas=$('#designerCanvas'),rect=canvas.getBoundingClientRect(),scale=rect.width/960;
+    const start=clientToLogical(ev,rect,scale),origin={x:layer.x,y:layer.y,w:layer.width,h:layer.height};
+    const resizing=ev.target===handle;el.setPointerCapture(ev.pointerId);
+    const move=event=>{const pt=clientToLogical(event,rect,scale);if(resizing)resizeLayer(layer.id,origin.w+pt.x-start.x,origin.h+pt.y-start.y);else moveLayer(layer.id,origin.x+pt.x-start.x,origin.y+pt.y-start.y)};
+    const up=event=>{el.releasePointerCapture(event.pointerId);el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',up)};
+    el.addEventListener('pointermove',move);el.addEventListener('pointerup',up);
+  });
+}
 function renderCanvas(page){
-  const canvas=$('#designerCanvas');canvas.innerHTML='';canvas.style.background=(page?.background?.color||'#071019');
-  if(!page){canvas.innerHTML='<div class="muted">Select a page</div>';return}
-  const hint=document.createElement('div');hint.className='layer-label muted';hint.textContent=`${page.name} · ${page.layers?.length||0} layers`;canvas.append(hint);
+  const canvas=$('#designerCanvas');canvas.innerHTML='';if(!page)return;
+  page=normalizePage(page);canvas.style.background=page.background.color;
+  [...page.layers].sort((a,b)=>(a.z||0)-(b.z||0)).forEach(layer=>canvas.append(renderLayer(layer)));
+  canvas.ondragover=e=>e.preventDefault();
+  canvas.ondrop=e=>{e.preventDefault();const rect=canvas.getBoundingClientRect(),scale=rect.width/960,pt=clientToLogical(e,rect,scale);let data={};try{data=JSON.parse(e.dataTransfer.getData('application/json')||'{}')}catch{};if(data.kind==='sensor')addLayer('value',data.binding,pt.x,pt.y);if(data.kind==='widget')addLayer(data.type,null,pt.x,pt.y);if(data.kind==='media')placeAsset(data.asset_id,pt.x,pt.y)};
+}
+function renderSensorPalette(){
+  const root=$('#sensorPalette');root.innerHTML='';state.sensors.slice(0,80).forEach(sensor=>{const el=document.createElement('div');el.className='palette-item';el.draggable=true;el.textContent=`${sensor.label} ${sensor.value??'--'}${sensor.unit||''}`;el.title=sensor.key;el.ondragstart=e=>e.dataTransfer.setData('application/json',JSON.stringify({kind:'sensor',binding:sensor.key}));root.append(el)});
+  const widgets=$('#widgetPalette');widgets.innerHTML='';['text','value','bar','gauge','ring','badge','sparkline'].forEach(type=>{const el=document.createElement('div');el.className='palette-item';el.draggable=true;el.textContent=type;el.ondragstart=e=>e.dataTransfer.setData('application/json',JSON.stringify({kind:'widget',type}));widgets.append(el)});
+}
+function renderInspector(){
+  const root=$('#inspectorBody'),layer=selected();if(!layer){root.innerHTML='<span class="muted">Select a layer</span>';return}
+  root.innerHTML=`<label>Type<select id="iType">${['text','value','bar','gauge','ring','badge','image','sparkline'].map(t=>`<option ${t===layer.type?'selected':''}>${t}</option>`).join('')}</select></label>
+  <div class="form-grid"><label>X<input id="iX" type="number" value="${layer.x}"></label><label>Y<input id="iY" type="number" value="${layer.y}"></label><label>W<input id="iW" type="number" value="${layer.width}"></label><label>H<input id="iH" type="number" value="${layer.height}"></label></div>
+  <label>Z<input id="iZ" type="number" value="${layer.z||0}"></label><label>Color<input id="iColor" type="color" value="${layer.color||'#ffffff'}"></label><label>Unit<input id="iUnit" value="${esc(layer.unit||'')}"></label><label>Binding<input id="iBinding" value="${esc(layer.binding||'')}"></label><label>Opacity<input id="iOpacity" type="range" min="0" max="1" step="0.05" value="${layer.opacity??1}"></label><button id="removeLayer" class="btn danger wide">Delete layer</button>`;
+  $('#iType').onchange=e=>setLayerType(layer.id,e.target.value);$('#iZ').onchange=e=>setLayerZ(layer.id,+e.target.value);
+  ['X','Y','W','H'].forEach(k=>$('#i'+k).onchange=()=>{const l=selected();if(k==='X'||k==='Y')moveLayer(l.id,+$('#iX').value,+$('#iY').value);else resizeLayer(l.id,+$('#iW').value,+$('#iH').value)});
+  ['Color','Unit','Binding','Opacity'].forEach(k=>$('#i'+k).oninput=e=>{const l=selected();const key={Color:'color',Unit:'unit',Binding:'binding',Opacity:'opacity'}[k];updateLayer({...l,[key]:key==='opacity'?+e.target.value:e.target.value})});
+  $('#removeLayer').onclick=()=>{state.currentPage=removeLayer(state.currentPage,layer.id);state.selectedLayer=null;renderCanvas(state.currentPage);renderInspector();markDraft()};
 }
 async function loadBase(){
-  state.settings=await api('/api/settings');renderSettings();await Promise.all([loadPages(),refreshStatus()]);
+  state.settings=await api('/api/settings');renderSettings();
+  const sensors=await api('/api/sensors');state.sensors=sensors.sensors||[];renderSensorPalette();
+  await Promise.all([loadPages(),refreshStatus()]);
 }
 function bindUi(){
   setupTabs();$('#addPage').onclick=()=>createPage();$('#saveCarousel').onclick=()=>saveCarousel();$('#saveSettings').onclick=()=>saveSettings(true);$('#saveProviders').onclick=()=>saveSettings(true);$('#addSchedule').onclick=()=>$('#schedule').append(scheduleRow());$('#brightness').oninput=e=>applyBrightness(e.target.value);
+  document.addEventListener('keydown',e=>{if(!state.selectedLayer||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName))return;e.preventDefault();const layer=selected(),step=e.shiftKey?10:1,dx=e.key==='ArrowLeft'?-1:e.key==='ArrowRight'?1:0,dy=e.key==='ArrowUp'?-1:e.key==='ArrowDown'?1:0;updateLayer(nudgeModel(layer,dx,dy,step))});
 }
 window.addEventListener('DOMContentLoaded',()=>{bindUi();loadBase().catch(err=>toast(err.message,true));setInterval(()=>refreshStatus().catch(()=>{}),5000)});
 

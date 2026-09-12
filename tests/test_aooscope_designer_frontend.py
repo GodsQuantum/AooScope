@@ -34,6 +34,13 @@ class DesignerFrontendTests(unittest.TestCase):
         self.assertIn('dragstart', js)
         self.assertIn('/api/carousel', js)
 
+    def test_admin_js_exposes_wysiwyg_functions(self):
+        js = self.client.get('/static/admin.js').get_data(as_text=True)
+        for fn in ('renderCanvas','addLayer','moveLayer','resizeLayer','setLayerType','setLayerZ','saveCurrentPage'):
+            self.assertIn(f'function {fn}', js)
+        self.assertIn("from './designer-model.js'", js)
+        self.assertIn('/api/sensors', js)
+
     def test_existing_display_and_provider_controls_remain(self):
         html = self.client.get('/').get_data(as_text=True)
         for marker in ('id="brightness"', 'id="timezone"', 'id="providers"', 'id="saveSettings"'):
