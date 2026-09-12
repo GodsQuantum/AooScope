@@ -1,0 +1,21 @@
+{
+  "display": {
+    "brand": "AOOSCOPE",
+    "brightness": 100,
+    "schedule_enabled": false,
+    "timezone": "UTC",
+    "schedule": [{"start": "22:00", "end": "08:00", "brightness": 70}],
+    "switch_seconds": 8
+  },
+  "providers": {
+    "proxmox": {"enabled": false, "url": "", "node": "pve", "verify_tls": true},
+    "beszel": {"enabled": false, "url": "", "system": "", "verify_tls": true},
+    "jellyfin": {"enabled": false, "url": "", "verify_tls": true},
+    "silo": {"enabled": false, "url": "", "verify_tls": true},
+    "radarr": {"enabled": false, "url": "", "verify_tls": true},
+    "sonarr": {"enabled": false, "url": "", "verify_tls": true},
+    "qbittorrent": {"enabled": false, "url": "", "verify_tls": true},
+    "immich": {"enabled": false, "url": "", "verify_tls": true},
+    "ollama": {"enabled": false, "url": "", "verify_tls": true}
+  }
+}
