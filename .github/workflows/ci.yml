@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  reference-python:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -19,20 +19,35 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-      - name: Install test dependencies
+      - name: Install reference dependencies
         run: python -m pip install --disable-pip-version-check flask pillow waitress
-      - name: Compile Python
-        run: python -m compileall -q aooscope webui.py
-      - name: Validate Admin JavaScript syntax
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          from webui import ADMIN_HTML
-          script = ADMIN_HTML.split('<script>', 1)[1].split('</script>', 1)[0]
-          Path('/tmp/aooscope-admin.js').write_text(script)
-          PY
-          node --check /tmp/aooscope-admin.js
-      - name: Unit tests
+      - name: Reference tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Deployment contract
         run: bash tests/test_deployment.sh
+
+  rust-svelte-foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Rust and Svelte checks in pinned toolchains
+        run: docker build --target rust-check -t aooscope:rust-check .
+      - name: Build foundation image
+        run: docker build -t aooscope:rust-foundation .
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+      - name: Install pinned supply-chain tools
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo install cargo-deny --version 0.20.2 --locked
+      - name: Audit advisories
+        run: cargo audit
+      - name: Validate licenses, sources, and bans
+        run: cargo deny check
