@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
+import copy
+import io
 import json
 import os
+import tempfile
+import uuid
 from pathlib import Path
 
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, send_file
+
+from aooscope.factory_templates import FACTORY_TEMPLATES, factory_page
+from aooscope.media_library import AssetInUse, AssetNotFound, InvalidMedia, MediaLibrary
+from aooscope.page_compiler import compile_document, compile_page
+from aooscope.page_store import PageStore, PageValidationError, RevisionConflict, validate_document
+from aooscope.revisions import RevisionManager, RevisionError
+from aooscope.sensor_catalog import build_sensor_catalog
 
 from aooscope.settings import (
     PROVIDER_DEFAULTS,
@@ -65,6 +76,15 @@ def create_app(config_dir=None, provider_tester=None):
     state_path = root / "state.json"
     device = os.getenv("AOOSCOPE_DEVICE", "/dev/ttyACM0")
     app = Flask(__name__)
+    page_store = PageStore(root)
+    media_library = MediaLibrary(root)
+
+    def read_state():
+        try:
+            return json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+
 
     @app.after_request
     def disable_browser_cache(response):
@@ -120,6 +140,212 @@ def create_app(config_dir=None, provider_tester=None):
             "device_present": Path(device).exists(),
             "updated_unix": ((state.get("meta") or {}).get("updated_unix")),
         })
+
+    @app.errorhandler(PageValidationError)
+    def page_validation_error(exc):
+        return jsonify({"ok": False, "error": "validation", "issues": exc.issues}), 422
+
+    @app.errorhandler(RevisionConflict)
+    def page_revision_error(exc):
+        return jsonify({"ok": False, "error": "revision_conflict", "current_revision": exc.current}), 409
+
+    @app.errorhandler(InvalidMedia)
+    def invalid_media_error(exc):
+        return jsonify({"ok": False, "error": "invalid_media", "message": str(exc)}), 422
+
+    @app.errorhandler(AssetInUse)
+    def asset_in_use_error(exc):
+        return jsonify({"ok": False, "error": "asset_in_use", "asset_id": str(exc)}), 409
+
+    @app.errorhandler(AssetNotFound)
+    def asset_not_found_error(exc):
+        return jsonify({"ok": False, "error": "asset_not_found", "asset_id": str(exc)}), 404
+
+    def page_summary(page):
+        return {k: copy.deepcopy(page.get(k)) for k in (
+            "id", "name", "enabled", "duration", "template_id", "revision"
+        )}
+
+    @app.get("/api/pages")
+    def get_pages():
+        doc = page_store.load()
+        return jsonify({
+            "schema_version": doc["schema_version"],
+            "revision": doc["revision"],
+            "carousel": list(doc["carousel"]),
+            "pages": [page_summary(doc["pages"][pid]) for pid in doc["carousel"] if pid in doc["pages"]],
+        })
+
+    @app.post("/api/pages")
+    def create_page():
+        payload = request.get_json(silent=True) or {}
+        doc = page_store.load()
+        template_id = payload.get("template_id")
+        if template_id:
+            if template_id not in FACTORY_TEMPLATES:
+                return jsonify({"ok": False, "error": "unknown_template"}), 404
+            page = factory_page(template_id)
+        else:
+            pid = str(uuid.uuid4())
+            page = {
+                "id": pid, "name": str(payload.get("name") or "New page")[:80],
+                "enabled": True, "duration": 8, "background": {"color": "#071019"},
+                "layers": [], "template_id": None, "revision": 1,
+            }
+        doc["pages"][page["id"]] = page
+        doc["carousel"].append(page["id"])
+        saved = page_store.save(doc, expected_revision=doc["revision"])
+        return jsonify(saved["pages"][page["id"]]), 201
+
+    @app.get("/api/pages/<page_id>")
+    def get_page(page_id):
+        doc = page_store.load()
+        page = doc["pages"].get(page_id)
+        if not page:
+            return jsonify({"ok": False, "error": "page_not_found"}), 404
+        return jsonify(page)
+
+    @app.put("/api/pages/<page_id>")
+    def put_page(page_id):
+        payload = request.get_json(silent=True) or {}
+        doc = page_store.load()
+        current = doc["pages"].get(page_id)
+        if not current:
+            return jsonify({"ok": False, "error": "page_not_found"}), 404
+        expected = payload.get("revision")
+        if expected != current.get("revision"):
+            raise RevisionConflict(current.get("revision"))
+        page = copy.deepcopy(current)
+        for key, value in payload.items():
+            if key not in {"id", "revision"}:
+                page[key] = copy.deepcopy(value)
+        page["id"] = page_id
+        doc["pages"][page_id] = page
+        saved = page_store.save(doc, expected_revision=doc["revision"])
+        return jsonify(saved["pages"][page_id])
+
+    @app.delete("/api/pages/<page_id>")
+    def delete_page(page_id):
+        doc = page_store.load()
+        if page_id not in doc["pages"]:
+            return jsonify({"ok": False, "error": "page_not_found"}), 404
+        if len(doc["pages"]) <= 1:
+            return jsonify({"ok": False, "error": "last_page"}), 409
+        doc["pages"].pop(page_id)
+        doc["carousel"] = [pid for pid in doc["carousel"] if pid != page_id]
+        saved = page_store.save(doc, expected_revision=doc["revision"])
+        return jsonify({"ok": True, "revision": saved["revision"]})
+
+    @app.post("/api/pages/<page_id>/duplicate")
+    def duplicate_page(page_id):
+        doc = page_store.load()
+        source = doc["pages"].get(page_id)
+        if not source:
+            return jsonify({"ok": False, "error": "page_not_found"}), 404
+        page = copy.deepcopy(source)
+        page["id"] = str(uuid.uuid4())
+        page["name"] = (str(source.get("name") or "Page") + " Copy")[:80]
+        page["template_id"] = source.get("template_id")
+        page["revision"] = 1
+        doc["pages"][page["id"]] = page
+        idx = doc["carousel"].index(page_id) + 1 if page_id in doc["carousel"] else len(doc["carousel"])
+        doc["carousel"].insert(idx, page["id"])
+        saved = page_store.save(doc, expected_revision=doc["revision"])
+        return jsonify(saved["pages"][page["id"]]), 201
+
+    @app.post("/api/pages/<page_id>/restore")
+    def restore_page(page_id):
+        try:
+            saved = page_store.restore(page_id)
+        except KeyError:
+            return jsonify({"ok": False, "error": "page_not_found"}), 404
+        return jsonify(saved["pages"][page_id])
+
+    @app.put("/api/carousel")
+    def put_carousel():
+        payload = request.get_json(silent=True) or {}
+        doc = page_store.load()
+        if payload.get("revision") != doc["revision"]:
+            raise RevisionConflict(doc["revision"])
+        items = payload.get("items") or []
+        order = [str(item.get("id")) for item in items]
+        if set(order) != set(doc["pages"]):
+            raise PageValidationError(["carousel items must contain every page exactly once"])
+        for item in items:
+            page = doc["pages"][str(item["id"])]
+            page["enabled"] = bool(item.get("enabled", page.get("enabled", True)))
+            page["duration"] = int(item.get("duration", page.get("duration", 8)))
+        doc["carousel"] = order
+        saved = page_store.save(doc, expected_revision=doc["revision"])
+        return jsonify({"ok": True, "revision": saved["revision"], "carousel": saved["carousel"]})
+
+    @app.get("/api/sensors")
+    def get_sensors():
+        return jsonify({"sensors": build_sensor_catalog(read_state())})
+
+    @app.get("/api/media")
+    def get_media():
+        return jsonify({"assets": media_library.list()})
+
+    @app.post("/api/media")
+    def post_media():
+        upload = request.files.get("file")
+        if upload is None:
+            return jsonify({"ok": False, "error": "missing_file"}), 400
+        asset = media_library.ingest(upload.stream, upload.filename or "asset")
+        return jsonify(asset), 201
+
+    @app.put("/api/media/<asset_id>")
+    def put_media(asset_id):
+        upload = request.files.get("file")
+        if upload is None:
+            return jsonify({"ok": False, "error": "missing_file"}), 400
+        return jsonify(media_library.replace(asset_id, upload.stream, upload.filename or "asset"))
+
+    @app.get("/api/media/<asset_id>/file")
+    def media_file(asset_id):
+        return send_file(media_library.resolve(asset_id), conditional=True)
+
+    @app.delete("/api/media/<asset_id>")
+    def delete_media(asset_id):
+        media_library.delete(asset_id, page_store.load())
+        return jsonify({"ok": True})
+
+    @app.post("/api/preview")
+    def preview_page():
+        payload = request.get_json(silent=True) or {}
+        page = copy.deepcopy(payload.get("page") or {})
+        preview_doc = {
+            "schema_version": 1,
+            "revision": 1,
+            "carousel": [page.get("id")],
+            "pages": {str(page.get("id")): page},
+        }
+        validate_document(preview_doc)
+        settings = load_settings(settings_path)
+        with tempfile.TemporaryDirectory(prefix="aooscope-preview-") as td:
+            result = compile_page(
+                page, read_state(), media_library, Path(td),
+                brightness=effective_brightness(settings),
+            )
+            buf = io.BytesIO()
+            result.background.save(buf, "PNG")
+            buf.seek(0)
+            return send_file(buf, mimetype="image/png", download_name="preview.png")
+
+    @app.post("/api/apply")
+    def apply_pages():
+        doc = page_store.load()
+        settings = load_settings(settings_path)
+        brightness = effective_brightness(settings)
+        compiler = lambda d, state, output: compile_document(
+            d, state, media_library, output, brightness=brightness
+        )
+        revisions = RevisionManager(root)
+        rid = revisions.stage(doc, read_state(), compiler)
+        revisions.promote(rid)
+        manifest = json.loads((root / "compiled" / rid / "manifest.json").read_text(encoding="utf-8"))
+        return jsonify({"ok": True, "revision_id": rid, "warnings": manifest.get("warnings", [])})
 
     @app.get("/api/health")
     def health():
