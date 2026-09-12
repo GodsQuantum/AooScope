@@ -33,7 +33,7 @@ The migration targets stable releases current as of September 12, 2026, avoiding
 - Tokio 1.53.1 async runtime, Axum 0.8.9 with Tower/Tower HTTP middleware, and Tower HTTP 0.7.1 where dependency compatibility permits.
 - Reqwest 0.13.5 with Rustls TLS; Rustls 0.23.44 stable, not the 0.24 development line.
 - Serde 1.0.229 and explicit schema-versioned JSON models; tracing 0.1.44 and thiserror 2.0.20 for structured diagnostics/errors.
-- Svelte 5 runes with SvelteKit and `@sveltejs/adapter-static` 3.0.10.
+- Svelte 5 runes with SvelteKit and `@sveltejs/adapter-static` 3.0.10; Node.js 24.21.0 LTS is the build-time JavaScript runtime and pnpm 12.3.4 the pinned package manager.
 - Vite 8.1 using its Rolldown-based production pipeline; experimental bundled dev mode remains disabled unless profiling proves a benefit.
 - Vitest 5 for frontend unit/component tests and Playwright 1.63 for browser tests.
 - cargo-nextest 0.9.144 for Rust CI test execution; cargo-llvm-cov 0.9.x for dedicated coverage jobs.
