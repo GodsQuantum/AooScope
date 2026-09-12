@@ -19,3 +19,6 @@ tracing-subscriber.workspace = true
 utoipa.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
+rust-embed-for-web = "11.4.1"
+futures-util = "0.3.34"
+mime_guess = "2.0.5"
