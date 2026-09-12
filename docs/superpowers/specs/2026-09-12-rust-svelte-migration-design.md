@@ -30,9 +30,9 @@ This is a compatibility-first migration, not a clean-slate rewrite.
 The migration targets stable releases current as of September 12, 2026, avoiding development/pre-release dependencies in production:
 
 - Rust 1.98.1 toolchain, pinned with `rust-toolchain.toml`; 1.98.0 is not accepted because 1.98.1 fixes a vtable miscompilation.
-- Axum 0.8.9 with Tower/Tower HTTP middleware; Tower HTTP 0.7.1 where dependency compatibility permits.
+- Tokio 1.53.1 async runtime, Axum 0.8.9 with Tower/Tower HTTP middleware, and Tower HTTP 0.7.1 where dependency compatibility permits.
 - Reqwest 0.13.5 with Rustls TLS; Rustls 0.23.44 stable, not the 0.24 development line.
-- Serde 1.0.229 and explicit schema-versioned JSON models.
+- Serde 1.0.229 and explicit schema-versioned JSON models; tracing 0.1.44 and thiserror 2.0.20 for structured diagnostics/errors.
 - Svelte 5 runes with SvelteKit and `@sveltejs/adapter-static` 3.0.10.
 - Vite 8.1 using its Rolldown-based production pipeline; experimental bundled dev mode remains disabled unless profiling proves a benefit.
 - Vitest 5 for frontend unit/component tests and Playwright 1.63 for browser tests.
