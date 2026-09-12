@@ -2,10 +2,14 @@
 /.github
 /.venv
 /.local
+/target
+/dist
+/frontend/node_modules
+/frontend/.svelte-kit
+/frontend/build
 /__pycache__
 **/__pycache__
 *.pyc
-/tests
 /docs
 *.md
 compose*.yaml

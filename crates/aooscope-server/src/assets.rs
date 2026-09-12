@@ -8,6 +8,7 @@ use rust_embed_for_web::{EmbedableFile, RustEmbed};
 
 #[derive(RustEmbed)]
 #[folder = "../../frontend/build/"]
+#[allow_missing = true]
 #[exclude = "**/*.br"]
 #[exclude = "**/*.gz"]
 struct FrontendAssets;
