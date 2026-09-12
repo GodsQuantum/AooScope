@@ -1,0 +1,28 @@
+{
+  "name": "aooscope-frontend",
+  "private": true,
+  "version": "0.3.0-dev",
+  "type": "module",
+  "packageManager": "pnpm@12.4.1",
+  "engines": {"node": ">=24 <27"},
+  "scripts": {
+    "api:types": "openapi-typescript openapi.json -o src/lib/api/schema.d.ts",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "3.0.10",
+    "@sveltejs/kit": "2.70.3",
+    "@sveltejs/vite-plugin-svelte": "7.3.0",
+    "@testing-library/svelte": "5.3.1",
+    "@types/node": "24.3.1",
+    "jsdom": "26.1.0",
+    "openapi-typescript": "7.13.0",
+    "svelte": "5.57.0",
+    "svelte-check": "4.7.6",
+    "typescript": "5.9.3",
+    "vite": "8.3.0",
+    "vitest": "5.0.0"
+  }
+}

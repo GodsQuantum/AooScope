@@ -1,0 +1,332 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "aooscope-server",
+    "description": "",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.3.0-dev"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "routes::health"
+        ],
+        "operationId": "get_health",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pages": {
+      "get": {
+        "tags": [
+          "routes::pages"
+        ],
+        "operationId": "get_pages",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagesListDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "routes::settings"
+        ],
+        "operationId": "get_settings",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSettingsDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/status": {
+      "get": {
+        "tags": [
+          "routes::status"
+        ],
+        "operationId": "get_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DisplaySettings": {
+        "type": "object",
+        "properties": {
+          "brand": {
+            "type": "string"
+          },
+          "brightness": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "schedule": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleRule"
+            }
+          },
+          "schedule_enabled": {
+            "type": "boolean"
+          },
+          "switch_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": {}
+      },
+      "HealthDto": {
+        "type": "object",
+        "required": [
+          "ok",
+          "version"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "PageSummaryDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "enabled",
+          "duration",
+          "revision"
+        ],
+        "properties": {
+          "duration": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "template_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PagesListDto": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "revision",
+          "carousel",
+          "pages"
+        ],
+        "properties": {
+          "carousel": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageSummaryDto"
+            }
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "PublicProviderDto": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "url",
+          "verify_tls",
+          "secret_set"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "node": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret_set": {
+            "type": "boolean"
+          },
+          "system": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "verify_tls": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": {}
+      },
+      "PublicSettingsDto": {
+        "type": "object",
+        "required": [
+          "display",
+          "providers"
+        ],
+        "properties": {
+          "display": {
+            "$ref": "#/components/schemas/DisplaySettings"
+          },
+          "providers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PublicProviderDto"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": {}
+      },
+      "ScheduleRule": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "brightness"
+        ],
+        "properties": {
+          "brightness": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "end": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": {}
+      },
+      "StatusDto": {
+        "type": "object",
+        "required": [
+          "version",
+          "brightness",
+          "native_brightness",
+          "device_present"
+        ],
+        "properties": {
+          "brightness": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "device_present": {
+            "type": "boolean"
+          },
+          "native_brightness": {
+            "type": "boolean"
+          },
+          "updated_unix": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "aooscope",
+      "description": "AooScope compatibility API"
+    }
+  ]
+}
