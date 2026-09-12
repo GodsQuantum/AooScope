@@ -46,6 +46,13 @@ class DesignerFrontendTests(unittest.TestCase):
         for marker in ('id="brightness"', 'id="timezone"', 'id="providers"', 'id="saveSettings"'):
             self.assertIn(marker, html)
 
+    def test_admin_js_exposes_media_library_functions(self):
+        js = self.client.get('/static/admin.js').get_data(as_text=True)
+        for fn in ['loadMedia','uploadMedia','placeAsset','replaceAsset','deleteAsset','previewCurrentPage']:
+            self.assertIn(f'function {fn}', js)
+        self.assertIn("layer.fit='contain'", js)
+        self.assertIn('/api/media', js)
+
 
 if __name__ == '__main__':
     unittest.main()
