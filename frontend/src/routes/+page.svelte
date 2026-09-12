@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import type { components } from '$lib/api/schema';
   import { getJson } from '$lib/api/client';
+  import { connectStatusEvents } from '$lib/api/live';
   import DisplayStatus from '$lib/components/DisplayStatus.svelte';
   import Tabs from '$lib/components/Tabs.svelte';
 
@@ -15,9 +16,12 @@
   let error = $state('');
   const connectionLabel = $derived(status.device_present ? 'Display online' : 'Display offline');
 
-  onMount(async () => {
-    try { status = await getJson('/api/status'); }
-    catch (err) { error = err instanceof Error ? err.message : String(err); }
+  onMount(() => {
+    let active = true;
+    void getJson('/api/status').then((value) => { if (active) status = value; })
+      .catch((err) => { if (active) error = err instanceof Error ? err.message : String(err); });
+    const disconnect = connectStatusEvents((value) => { if (active) status = value; });
+    return () => { active = false; disconnect(); };
   });
 </script>
 

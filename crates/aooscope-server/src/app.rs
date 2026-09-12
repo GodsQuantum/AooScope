@@ -1,4 +1,4 @@
-use crate::{routes, state::AppState};
+use crate::{assets, routes, state::AppState};
 use axum::{
     Router,
     http::{HeaderName, StatusCode},
@@ -19,6 +19,9 @@ pub fn app(state: AppState) -> Router {
         .route("/api/status", get(routes::status::get_status))
         .route("/api/settings", get(routes::settings::get_settings))
         .route("/api/pages", get(routes::pages::get_pages))
+        .route("/api/events", get(routes::events::get_events))
+        .route("/", get(assets::index))
+        .route("/{*path}", get(assets::asset))
         .with_state(state)
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))

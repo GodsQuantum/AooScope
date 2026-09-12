@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod assets;
 pub mod dto;
 pub mod error;
 pub mod openapi;
@@ -8,6 +9,7 @@ pub mod routes;
 pub mod state;
 
 pub use app::app;
+pub use dto::StatusDto;
 pub use openapi::ApiDoc;
 pub use state::AppState;
 
