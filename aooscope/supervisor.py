@@ -210,6 +210,18 @@ class DisplaySupervisor:
         self.signature = object()
         self.running = True
 
+    def load_promoted_revision(self):
+        pointer = self.config_dir / "compiled" / "current.json"
+        try:
+            data = json.loads(pointer.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        rid = str(data.get("revision_id") or "")
+        config_dir = self.config_dir / "compiled" / rid
+        if not rid or not (config_dir / "monitor.json").is_file():
+            return None
+        return {**data, "config_dir": str(config_dir), "monitor_path": str(config_dir / "monitor.json")}
+
     def current_display_profile(self):
         if self.settings_path.is_file():
             settings = load_settings(self.settings_path)
