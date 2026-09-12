@@ -6,4 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+aooscope-server = { path = "../crates/aooscope-server" }
 serde_json.workspace = true
+utoipa.workspace = true
