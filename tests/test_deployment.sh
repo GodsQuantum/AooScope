@@ -22,3 +22,5 @@ exit "$fail"
 
 node --check web/admin.js >/dev/null
 pass 'admin javascript syntax is valid'
+
+grep -q 'python3 -m aooscope.animation_runtime' start.sh && pass 'runtime starts animation engine' || fail 'runtime missing animation engine'

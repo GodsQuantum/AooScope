@@ -73,6 +73,15 @@ class MediaLibraryTests(unittest.TestCase):
         with self.assertRaises(InvalidMedia):
             small.ingest(io.BytesIO(fake_mp4 + b"x" * 200), "too-big.mp4")
 
+    def test_safe_svg_can_be_rasterized_for_page_preview(self):
+        svg=b'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60"><rect width="120" height="60" fill="#35d9ff"/></svg>'
+        asset=self.library.ingest(io.BytesIO(svg),'logo.svg')
+        preview=self.library.preview_path(asset['id'])
+        self.assertTrue(preview.is_file())
+        with Image.open(preview) as image:
+            self.assertGreater(image.width,0)
+            self.assertGreater(image.height,0)
+
 
 if __name__ == "__main__":
     unittest.main()

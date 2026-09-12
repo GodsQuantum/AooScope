@@ -13,7 +13,7 @@ RUN git clone https://github.com/zehnm/aoostar-rs.git /src/aoostar-rs \
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libudev1 python3 python3-pil python3-flask python3-waitress tzdata \
-    iproute2 procps tini \
+    iproute2 procps tini ffmpeg librsvg2-bin \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /app/cfg/sensors /app/cfg/private /app/defaults
 COPY --from=builder /out/asterctl /usr/local/bin/asterctl

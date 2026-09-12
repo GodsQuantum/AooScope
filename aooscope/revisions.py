@@ -62,6 +62,7 @@ class RevisionManager:
         try:
             result = compiler(doc, state, target)
             _atomic_json(target / "monitor.json", result.monitor_config)
+            _atomic_json(target / "source-pages.json", doc)
             _atomic_json(target / "manifest.json", {
                 "revision_id": rid,
                 "page_revision": int((doc or {}).get("revision", 0)),

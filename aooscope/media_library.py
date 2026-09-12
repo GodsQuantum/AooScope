@@ -4,6 +4,7 @@ import io
 import json
 import os
 import tempfile
+import subprocess
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -193,6 +194,40 @@ class MediaLibrary:
             except OSError:
                 pass
         return dict(asset)
+    def get(self, asset_id):
+        asset = self._load_doc()["assets"].get(asset_id)
+        if not asset:
+            raise AssetNotFound(asset_id)
+        return dict(asset)
+
+    def preview_path(self, asset_id):
+        asset = self.get(asset_id)
+        source = self.resolve(asset_id)
+        fmt = str(asset.get("format") or "").upper()
+        if fmt in {"PNG", "JPEG", "WEBP", "GIF"}:
+            return source
+        previews = self.media_root / "previews"
+        previews.mkdir(parents=True, exist_ok=True)
+        target = previews / f"{asset_id}-r{asset.get('revision',1)}.png"
+        if target.is_file() and target.stat().st_size > 0:
+            return target
+        if fmt == "SVG":
+            cmd = ["rsvg-convert", "-w", "960", "-o", str(target), str(source)]
+        elif fmt in {"MP4", "WEBM"}:
+            cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(source), "-frames:v", "1",
+                   "-vf", "scale=960:-2:force_original_aspect_ratio=decrease", str(target)]
+        else:
+            raise InvalidMedia(f"no preview renderer for {fmt}")
+        try:
+            subprocess.run(cmd, check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            with Image.open(target) as image:
+                image.verify()
+        except (OSError, subprocess.SubprocessError, UnidentifiedImageError) as exc:
+            try: target.unlink()
+            except OSError: pass
+            raise InvalidMedia(f"could not render {fmt} preview") from exc
+        return target
+
     def resolve(self, asset_id):
         doc = self._load_doc()
         asset = doc["assets"].get(asset_id)

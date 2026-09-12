@@ -37,6 +37,20 @@ class AooScopeSupervisorTests(unittest.TestCase):
         cfg=desired_monitor_config(None, splash_image="branding/logo.jpg")
         self.assertEqual([p["id"] for p in cfg["diy"]], ["splash","home","storage","compute"])
 
+    def test_promoted_command_uses_compiled_config_directory(self):
+        import os, json, tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from aooscope.supervisor import DisplaySupervisor
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); compiled=root/'compiled'/'r1'; compiled.mkdir(parents=True)
+            (compiled/'monitor.json').write_text('{}')
+            (root/'compiled'/'current.json').write_text(json.dumps({'revision_id':'r1'}))
+            with patch.dict(os.environ, {'AOOSCOPE_CONFIG_DIR_IN_CONTAINER':td}, clear=False):
+                sup=DisplaySupervisor(); promoted=sup.load_promoted_revision(); cmd=sup._cmd(Path(promoted['config_dir']), Path(promoted['monitor_path']))
+        self.assertEqual(cmd[cmd.index('--config-dir')+1], str(compiled))
+        self.assertEqual(cmd[cmd.index('--config')+1], 'monitor.json')
+
 
 if __name__ == "__main__":
     unittest.main()

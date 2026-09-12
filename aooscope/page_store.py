@@ -144,12 +144,13 @@ def _atomic_json(path, payload, mode=0o644):
 
 
 class PageStore:
-    def __init__(self, root):
+    def __init__(self, root, splash_asset_id=None):
         self.root = Path(root)
         self.path = self.root / "pages.json"
+        self.splash_asset_id = splash_asset_id
 
     def _existing_splash_asset(self):
-        return None
+        return self.splash_asset_id
 
     def _backup(self):
         if not self.path.is_file():

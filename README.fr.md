@@ -27,6 +27,14 @@ Le projet est un fork puis une réécriture importante de `xavtb78/aoostar-proxm
 
 > **Luminosité :** AooScope ne connaît actuellement aucune commande native documentée de rétroéclairage WTR MAX. Le curseur agit sur la luminance des pixels rendus, pas sur la puissance physique du backlight.
 
+## 🧩 Éditeur visuel de pages
+
+AooScope 0.2 ajoute dans l’Admin un éditeur WYSIWYG 960×376. On peut créer, dupliquer, réordonner, activer/désactiver et supprimer les pages du carrousel, glisser les métriques live sur le canvas, choisir valeur, barre, jauge, anneau, badge ou sparkline, importer des médias réutilisables, prévisualiser puis appliquer atomiquement au LCD avec rollback.
+
+Une image peut être réutilisée sur plusieurs pages. **Animate** transforme un logo en aperçu orbital HTML/CSS ; sur le WTR MAX, l’orbite est pilotée par un capteur synthétique et les partial updates d’`aoostar-rs` (5 FPS par défaut, plafond 8 FPS), au lieu d’envoyer une vidéo plein écran. GIF/vidéos peuvent être importés comme sources, mais la lecture plein écran à haut FPS est volontairement évitée sur le lien série.
+
+Les modifications restent en brouillon jusqu’à **Apply to LCD**. Le planning de luminosité re-rend la dernière révision appliquée sans publier les brouillons.
+
 ## 🚀 Installation rapide
 
 ```bash

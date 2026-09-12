@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageOps
 from aooscope.panels import scale_hex_color
 from aooscope.render import WIDTH, HEIGHT, _font
 from aooscope.sensor_catalog import build_sensor_catalog
+from aooscope.animation_runtime import animation_sensor_key
 
 
 @dataclass
@@ -144,7 +145,7 @@ def _visual_sensor(layer, relative_pic, brightness):
 
 def _paste_image(canvas, layer, media_library, warnings):
     try:
-        source_path = media_library.resolve(layer["asset_id"])
+        source_path = media_library.preview_path(layer["asset_id"])
         with Image.open(source_path) as source:
             image = source.convert("RGBA")
     except Exception as exc:
@@ -211,6 +212,23 @@ def _draw_sparkline(canvas, layer, warnings):
     ImageDraw.Draw(canvas).line(points, fill=_rgb(layer.get("color", "#35d9ff")), width=max(1, int(layer.get("stroke", 3))))
 
 
+
+def _save_orbit_asset(output_dir, layer, brightness):
+    width=max(24,int(layer.get("width",160)));height=max(24,int(layer.get("height",160)))
+    assets=Path(output_dir)/"assets";assets.mkdir(parents=True,exist_ok=True)
+    image=Image.new("RGBA",(width,height),(0,0,0,0));draw=ImageDraw.Draw(image)
+    color=_rgb(layer.get("color","#35d9ff"));r=max(3,min(width,height)//24)
+    cx=width//2; draw.ellipse((cx-r,2,cx+r,2+2*r),fill=color+(255,))
+    image=_dim_image(image,brightness)
+    safe="".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(layer.get("id","anim")))
+    path=assets/f"animation-{safe}.png";image.save(path)
+    return path,f"assets/{path.name}"
+
+def _animation_sensor(layer, relative_pic, brightness):
+    sensor=_sensor_base({**layer,"binding":animation_sensor_key(layer.get("id"))},0,brightness)
+    sensor.update({"mode":2,"pic":relative_pic,"x":int(layer["x"]+layer["width"]/2),"y":int(layer["y"]+layer["height"]/2),"minValue":0,"maxValue":100,"minAngle":0,"maxAngle":360})
+    return sensor
+
 def compile_page(page, state, media_library, output_dir, brightness=100):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -228,8 +246,13 @@ def compile_page(page, state, media_library, output_dir, brightness=100):
         elif kind == "animation":
             if layer.get("asset_id"):
                 _paste_image(background, layer, media_library, warnings)
-            warnings.append(f"{layer['id']}: animation rendered as static source frame")
-            static_z.append(layer.get("z", 0))
+                static_z.append(layer.get("z", 0)-1)
+            if layer.get("animation", "orbit") == "orbit":
+                asset_path, relative_pic = _save_orbit_asset(output_dir, layer, brightness)
+                sensors.append((layer.get("z", 0), _animation_sensor(layer, relative_pic, brightness)))
+                files.append(asset_path); dynamic_z.append(layer.get("z", 0))
+            else:
+                warnings.append(f"{layer['id']}: unsupported animation mode")
         elif kind == "sparkline":
             _draw_sparkline(background, layer, warnings)
             static_z.append(layer.get("z", 0))
