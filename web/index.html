@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AooScope Admin</title>
+<link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<header class="topbar">
+  <div><h1>AooScope</h1><p>AOOSTAR LCD control studio</p></div>
+  <div id="device" class="pill">Display …</div>
+</header>
+<nav class="tabs" aria-label="AooScope sections">
+  <button class="tab active" data-tab="pages">▦ Pages</button>
+  <button class="tab" data-tab="media">▧ Media</button>
+  <button class="tab" data-tab="display">◐ Display</button>
+  <button class="tab" data-tab="providers">⌁ Providers</button>
+</nav>
+<main>
+<section class="tab-panel active" data-panel="pages">
+  <div class="pages-layout">
+    <aside class="sidebar card">
+      <div class="section-head"><h2>Carousel</h2><button id="addPage" class="btn primary">+ Page</button></div>
+      <p class="muted">Drag pages to reorder. Edits remain drafts until Apply.</p>
+      <div id="pageList" class="page-list"></div>
+      <button id="saveCarousel" class="btn wide">Save carousel</button>
+    </aside>
+    <section class="workspace card">
+      <div class="section-head">
+        <div><h2 id="pageTitle">Select a page</h2><div id="draftStatus" class="status"></div></div>
+        <div class="toolbar"><button id="previewPage" class="btn">Preview</button><button id="applyCarousel" class="btn primary">Apply to LCD</button></div>
+      </div>
+      <div class="designer-shell">
+        <aside id="palette" class="palette">
+          <h3>Sensors</h3><div id="sensorPalette"></div>
+          <h3>Widgets</h3><div id="widgetPalette"></div>
+          <h3>Media</h3><div id="mediaPalette"></div>
+        </aside>
+        <div class="canvas-wrap"><div id="designerCanvas" class="designer-canvas" aria-label="960 by 376 LCD canvas"></div></div>
+        <aside id="inspector" class="inspector"><h3>Inspector</h3><div id="inspectorBody" class="muted">Select a layer</div></aside>
+      </div>
+    </section>
+  </div>
+</section>
+<section class="tab-panel" data-panel="media">
+  <div class="card">
+    <div class="section-head"><div><h2>Media Library</h2><p class="muted">Reusable images, logos and animation sources.</p></div><label class="btn primary">Upload<input id="mediaUpload" type="file" multiple hidden></label></div>
+    <div id="mediaLibrary" class="media-grid"></div>
+  </div>
+</section>
+<section class="tab-panel" data-panel="display">
+  <div class="card settings-card"><h2>Display</h2>
+    <div class="form-grid">
+      <label>Brand<input id="brand" maxlength="32"></label>
+      <label>Timezone<input id="timezone" placeholder="Europe/Paris"></label>
+      <label>Carousel interval (s)<input id="switchSeconds" type="number" min="2" max="120"></label>
+      <label class="toggle-line"><input id="scheduleEnabled" type="checkbox"> Brightness schedule</label>
+    </div>
+    <label>Brightness <strong id="brightnessLabel">100%</strong><input id="brightness" type="range" min="0" max="100"></label>
+    <p class="muted">Software luminance; the known WTR MAX protocol exposes no native backlight control.</p>
+    <div id="displayLive" class="status">Checking LCD…</div>
+    <h3>Schedule</h3><div id="schedule"></div><button id="addSchedule" class="btn">+ Schedule</button>
+    <div class="footer-actions"><button id="saveSettings" class="btn primary">Save display settings</button><span id="saveStatus" class="status"></span></div>
+  </div>
+</section>
+<section class="tab-panel" data-panel="providers">
+  <div class="section-head"><div><h2>Providers</h2><p class="muted">Connect services by URL or IP:port. Secrets stay private.</p></div><button id="saveProviders" class="btn primary">Save providers</button></div>
+  <div id="providers" class="provider-grid"></div>
+</section>
+</main>
+<div id="toast" class="toast" aria-live="polite"></div>
+<script type="module" src="/static/admin.js"></script>
+</body>
+</html>

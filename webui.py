@@ -75,7 +75,8 @@ def create_app(config_dir=None, provider_tester=None):
     secrets_path = root / "private" / "providers.json"
     state_path = root / "state.json"
     device = os.getenv("AOOSCOPE_DEVICE", "/dev/ttyACM0")
-    app = Flask(__name__)
+    web_root = Path(__file__).with_name("web")
+    app = Flask(__name__, static_folder=str(web_root), static_url_path="/static")
     page_store = PageStore(root)
     media_library = MediaLibrary(root)
 
@@ -98,7 +99,7 @@ def create_app(config_dir=None, provider_tester=None):
 
     @app.get("/")
     def index():
-        return Response(ADMIN_HTML, mimetype="text/html; charset=utf-8")
+        return send_file(web_root / "index.html", mimetype="text/html; charset=utf-8")
 
     @app.get("/api/settings")
     def get_settings():
