@@ -1,5 +1,4 @@
-use aooscope_config::AppPaths;
-use aooscope_server::{ApiDoc, AppState, app};
+use aooscope_server::ApiDoc;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -23,42 +22,9 @@ fn run() -> Result<(), String> {
         }
         Some("check") => check(),
         Some("dist") => dist(),
-        Some("parity-server") => {
-            let config = args
-                .next()
-                .ok_or("usage: xtask parity-server <config-dir> <bind>")?;
-            let bind = args
-                .next()
-                .ok_or("usage: xtask parity-server <config-dir> <bind>")?;
-            parity_server(PathBuf::from(config), &bind)
-        }
         Some(command) => Err(format!("unknown command: {command}")),
         None => Err("missing command".into()),
     }
-}
-
-fn parity_server(config: PathBuf, bind: &str) -> Result<(), String> {
-    let address: std::net::SocketAddr = bind
-        .parse()
-        .map_err(|e| format!("invalid bind address: {e}"))?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
-    runtime.block_on(async move {
-        let listener = tokio::net::TcpListener::bind(address)
-            .await
-            .map_err(|e| e.to_string())?;
-        let state = AppState::new(AppPaths::new(config.clone()))
-            .with_device(config.join(".parity-device-does-not-exist"));
-        eprintln!(
-            "parity-server ready on {}",
-            listener.local_addr().map_err(|e| e.to_string())?
-        );
-        axum::serve(listener, app(state))
-            .await
-            .map_err(|e| e.to_string())
-    })
 }
 
 fn root() -> Result<PathBuf, String> {
@@ -109,11 +75,8 @@ fn check() -> Result<(), String> {
         eprintln!("xtask: cargo-nextest unavailable; falling back to cargo test");
         run_cmd(&root, "cargo", &["test", "--workspace"])?;
     }
-    run_cmd(
-        &root,
-        "python3",
-        &["-m", "unittest", "tests.test_repo_hygiene", "-v"],
-    )?;
+    run_cmd(&root, "bash", &["tests/test_repo_hygiene.sh"])?;
+    run_cmd(&root, "bash", &["tests/test_deployment.sh"])?;
     Ok(())
 }
 

@@ -1,0 +1,17 @@
+{
+  "hardware": {
+    "cpu_temp_c": 52.5,
+    "gpu_busy_pct": 17.0
+  },
+  "pve": {
+    "cpu_pct": 21.5,
+    "memory_pct": 48.0,
+    "guests_running": 6
+  },
+  "media": {
+    "display": {"mode": "offline"}
+  },
+  "meta": {
+    "updated_unix": 1789200000
+  }
+}

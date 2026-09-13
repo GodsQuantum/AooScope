@@ -12,12 +12,14 @@ COPY frontend/ ./
 RUN pnpm check && pnpm test --run && pnpm build
 
 FROM rust:1.98.1-trixie AS rust-base
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libudev-dev \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ ./crates/
 COPY xtask/ ./xtask/
 COPY tests/fixtures/ ./tests/fixtures/
-COPY tests/test_repo_hygiene.py ./tests/test_repo_hygiene.py
 COPY --from=frontend-check /src/frontend/build ./frontend/build
 
 FROM rust-base AS rust-check
@@ -35,7 +37,7 @@ RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
 
 FROM debian:trixie-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tini tzdata \
+    ca-certificates libudev1 tini tzdata \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /app/cfg
 COPY --from=rust-builder /out/aooscope /usr/local/bin/aooscope

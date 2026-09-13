@@ -8,6 +8,18 @@ pub struct MediaDocument {
     pub schema_version: u32,
     #[serde(default)]
     pub assets: BTreeMap<String, MediaAsset>,
+    #[serde(default)]
+    pub presets: BTreeMap<String, MediaPreset>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct MediaPreset {
+    pub id: String,
+    pub name: String,
+    pub source_asset_id: String,
+    pub settings: BTreeMap<String, Value>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

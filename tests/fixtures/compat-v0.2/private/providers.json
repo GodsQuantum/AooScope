@@ -1,0 +1,5 @@
+{
+  "proxmox": {"api_token": "fixture-token"},
+  "jellyfin": {"api_key": "fixture-key"},
+  "qbittorrent": {"username": "fixture-user", "password": "fixture-password"}
+}

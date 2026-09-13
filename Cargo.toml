@@ -2,6 +2,8 @@
 members = [
   "crates/aooscope-types",
   "crates/aooscope-config",
+  "crates/aooscope-display",
+  "crates/aooscope-render",
   "crates/aooscope-server",
   "xtask",
 ]
@@ -14,7 +16,7 @@ rust-version = "1.98.1"
 license = "MIT"
 
 [workspace.dependencies]
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "test-util"] }
 axum = { version = "0.8.9", features = ["json", "multipart"] }
 tower-http = { version = "0.7.1", features = ["trace", "timeout", "request-id", "limit"] }
 tower = { version = "0.5", features = ["util"] }
@@ -25,6 +27,9 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 thiserror = "2.0.20"
 uuid = { version = "1", features = ["serde", "v4"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+sha2 = "0.10"
 
 [profile.release]
 opt-level = 3
