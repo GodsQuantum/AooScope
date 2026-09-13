@@ -19,6 +19,11 @@ pub fn app(state: AppState) -> Router {
         .route("/api/status", get(routes::status::get_status))
         .route("/api/settings", get(routes::settings::get_settings))
         .route("/api/pages", get(routes::pages::get_pages))
+        .route("/api/metrics", get(routes::catalog::get_metrics))
+        .route(
+            "/api/providers/catalog",
+            get(routes::catalog::get_provider_catalog),
+        )
         .route("/api/events", get(routes::events::get_events))
         .route("/", get(assets::index))
         .route("/{*path}", get(assets::asset))

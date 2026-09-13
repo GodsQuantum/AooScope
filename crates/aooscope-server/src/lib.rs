@@ -4,6 +4,7 @@ pub mod app;
 pub mod assets;
 pub mod dto;
 pub mod error;
+pub mod metrics;
 pub mod openapi;
 pub mod routes;
 pub mod state;
