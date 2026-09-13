@@ -130,8 +130,20 @@ pub fn compile_page(
                     Rgb([29, 38, 50]),
                 );
                 if layer.layer_type == "bar" {
-                    let n = (layer.width as f64 * value) as u32;
-                    rect(&mut image, layer.x, layer.y, n, layer.height, c);
+                    if layer.extra.get("orientation").and_then(Value::as_str) == Some("vertical") {
+                        let n = (layer.height as f64 * value) as u32;
+                        rect(
+                            &mut image,
+                            layer.x,
+                            layer.y + (layer.height - n) as i32,
+                            layer.width,
+                            n,
+                            c,
+                        );
+                    } else {
+                        let n = (layer.width as f64 * value) as u32;
+                        rect(&mut image, layer.x, layer.y, n, layer.height, c);
+                    }
                 } else {
                     let n = (layer.width.min(layer.height) as f64 * value) as u32;
                     rect(
