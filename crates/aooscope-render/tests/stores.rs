@@ -1,5 +1,5 @@
 use aooscope_render::{MediaStore, RevisionStore};
-use aooscope_types::{Page, PagesDocument};
+use aooscope_types::{Layer, Page, PagesDocument};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -60,6 +60,113 @@ fn gif_ingest_is_supported_by_the_enabled_decoder() {
         )
         .unwrap();
     assert_eq!(store.ingest(&bytes, "test.gif").unwrap().format, "GIF");
+}
+
+#[test]
+fn orbit_preset_reuses_source_bytes_and_does_not_replace_custom_splash_animation() {
+    let root = temp_root("orbit");
+    let store = MediaStore::new(&root).unwrap();
+    let image = image::RgbImage::from_pixel(2, 2, image::Rgb([9, 8, 7]));
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    let source = store.ingest(&bytes, "Cloud 9").unwrap();
+    let before = std::fs::read(root.join("media").join(&source.stored_name)).unwrap();
+    let preset = store.ensure_cloud9_orbit().unwrap();
+    assert_eq!(preset.name, "Cloud 9 · Orbit");
+    assert_eq!(preset.source_asset_id, source.id);
+    assert_eq!(preset.settings["fps"], 5);
+    assert_eq!(preset.settings["speed_seconds"], 4);
+    assert_eq!(std::fs::read_dir(root.join("media")).unwrap().count(), 1);
+    assert_eq!(
+        before,
+        std::fs::read(root.join("media").join(&source.stored_name)).unwrap()
+    );
+
+    let mut legacy_pages = PagesDocument {
+        schema_version: 1,
+        revision: 1,
+        carousel: vec!["splash".into()],
+        pages: Default::default(),
+        extra: Default::default(),
+    };
+    legacy_pages.pages.insert(
+        "splash".into(),
+        serde_json::from_value(json!({
+            "id":"splash", "name":"Splash", "duration":8, "revision":1,
+            "layers":[{"id":"logo","type":"image","asset_id":source.id,"x":0,"y":0,"width":2,"height":2,"z":1}]
+        })).unwrap(),
+    );
+    let existing = store.ensure_cloud9_orbit().unwrap();
+    assert_eq!(existing, preset);
+    assert!(MediaStore::migrate_splash(&mut legacy_pages, &existing));
+    assert_eq!(
+        legacy_pages.pages["splash"].layers[0].layer_type,
+        "animation"
+    );
+
+    let mut pages = PagesDocument {
+        schema_version: 1,
+        revision: 1,
+        carousel: vec!["splash".into()],
+        pages: Default::default(),
+        extra: Default::default(),
+    };
+    pages.pages.insert(
+        "splash".into(),
+        Page {
+            id: "splash".into(),
+            name: "Splash".into(),
+            enabled: true,
+            duration: 8,
+            template_id: None,
+            revision: 1,
+            background: Default::default(),
+            layers: vec![Layer {
+                id: "custom".into(),
+                layer_type: "animation".into(),
+                binding: None,
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 2,
+                z: 1,
+                opacity: 1.0,
+                clip: false,
+                extra: [("asset_id".into(), json!(source.id))]
+                    .into_iter()
+                    .collect(),
+            }],
+            extra: Default::default(),
+        },
+    );
+    assert!(!MediaStore::migrate_splash(&mut pages, &preset));
+    assert_eq!(pages.pages["splash"].layers[0].layer_type, "animation");
+}
+
+#[test]
+fn orbit_source_matching_is_case_insensitive_without_matching_similar_names() {
+    let root = temp_root("orbit-source-matching");
+    let store = MediaStore::new(&root).unwrap();
+    let image = image::RgbImage::from_pixel(1, 1, image::Rgb([9, 8, 7]));
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    let unrelated = store.ingest(&bytes, "cloud 90.png").unwrap();
+    let source = store.ingest(&bytes, "cloud 9.png").unwrap();
+
+    let preset = store.ensure_cloud9_orbit().unwrap();
+
+    assert_eq!(preset.source_asset_id, source.id);
+    assert_ne!(preset.source_asset_id, unrelated.id);
 }
 
 fn temp_root(name: &str) -> PathBuf {

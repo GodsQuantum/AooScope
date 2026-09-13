@@ -197,22 +197,33 @@ impl DisplayScheduler {
         requested_fps: u32,
     ) -> Result<(), DisplayError> {
         self.current = promoted.borrow().clone();
-        let interval = if animation {
-            self.animation_schedule(requested_fps).interval
-        } else {
-            Duration::from_secs(1)
-        };
-        let mut ticker = tokio::time::interval(interval);
+        let mut animated = self
+            .current
+            .as_ref()
+            .and_then(|revision| source.animation_fps(revision).ok().flatten())
+            .or_else(|| animation.then_some(requested_fps));
+        let mut ticker = tokio::time::interval(
+            animated
+                .map(|fps| self.animation_schedule(fps).interval)
+                .unwrap_or(Duration::from_secs(1)),
+        );
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 changed = promoted.changed() => {
                     changed.map_err(|_| DisplayError::WorkerClosed)?;
                     self.current = promoted.borrow().clone();
+                    animated = self.current.as_ref()
+                        .and_then(|revision| source.animation_fps(revision).ok().flatten())
+                        .or_else(|| animation.then_some(requested_fps));
+                    ticker = tokio::time::interval(animated
+                        .map(|fps| self.animation_schedule(fps).interval)
+                        .unwrap_or(Duration::from_secs(1)));
+                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 }
                 _ = ticker.tick() => {
                     if let Some(revision) = self.current.as_ref() {
-                        let result = match source.frame(revision, animation) {
+                        let result = match source.frame(revision, animated.is_some()) {
                             Ok(frame) => {
                                 validate_frame(&frame).map(|()| frame)
                             }
@@ -236,6 +247,10 @@ impl DisplayScheduler {
 }
 
 pub trait FrameSource: Send + 'static {
+    fn animation_fps(&mut self, _revision: &PromotedRevision) -> Result<Option<u32>, DisplayError> {
+        Ok(None)
+    }
+
     fn frame(
         &mut self,
         revision: &PromotedRevision,

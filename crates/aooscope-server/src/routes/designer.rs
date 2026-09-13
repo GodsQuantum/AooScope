@@ -1,6 +1,6 @@
 use aooscope_config::{ConfigError, atomic_write_json, load_pages, load_state};
 use aooscope_render::{MediaError, MediaStore, RevisionStore, compile_document, compile_page};
-use aooscope_types::{MediaAsset, Page, PageBackground, validate_document};
+use aooscope_types::{MediaAsset, MediaPreset, Page, PageBackground, validate_document};
 use axum::{
     Json,
     body::{Body, Bytes},
@@ -356,11 +356,24 @@ pub async fn get_sensors(
 
 pub async fn get_media(
     State(state): State<crate::state::AppState>,
-) -> Result<Json<Vec<MediaAsset>>, RouteError> {
+) -> Result<Json<Value>, RouteError> {
     MediaStore::new(&state.paths.root)
-        .and_then(|store| store.list())
+        .and_then(|store| Ok(json!({"assets": store.list()?, "presets": store.presets()?})))
         .map(Json)
         .map_err(media_error)
+}
+
+pub async fn create_orbit_preset(
+    State(state): State<crate::state::AppState>,
+) -> Result<Json<MediaPreset>, RouteError> {
+    let store = MediaStore::new(&state.paths.root).map_err(media_error)?;
+    let preset = store.ensure_cloud9_orbit().map_err(media_error)?;
+    let mut pages = load_pages(&state.paths).map_err(config_error)?;
+    if aooscope_render::MediaStore::migrate_splash(&mut pages, &preset) {
+        pages.revision += 1;
+        atomic_write_json(&state.paths.pages(), &pages).map_err(config_error)?;
+    }
+    Ok(Json(preset))
 }
 
 pub async fn upload_media(

@@ -5,7 +5,7 @@ pub mod pages;
 pub mod settings;
 pub mod state;
 
-pub use media::{MediaAsset, MediaDocument};
+pub use media::{MediaAsset, MediaDocument, MediaPreset};
 pub use media_state::{MediaDisplayEvent, MediaMode, provider_name};
 pub use metrics::{
     MetricCatalogDto, MetricDescriptor, ProviderCatalogDto, ProviderDescriptor, WidgetKind,
