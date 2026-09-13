@@ -13,24 +13,14 @@ services:
       - "${AOOSCOPE_CONFIG_DIR:-./data}:/app/cfg"
     environment:
       AOOSCOPE_DEVICE: /dev/ttyACM0
-      AOOSCOPE_REFRESH_SECONDS: ${AOOSCOPE_REFRESH_SECONDS:-5}
-      AOOSCOPE_SYSINFO_SECONDS: ${AOOSCOPE_SYSINFO_SECONDS:-5}
-      AOOSCOPE_BRAND: ${AOOSCOPE_BRAND:-AOOSCOPE}
-      AOOSCOPE_SPLASH_IMAGE: ${AOOSCOPE_SPLASH_IMAGE:-}
-      AOOSCOPE_SWITCH_SECONDS: ${AOOSCOPE_SWITCH_SECONDS:-8}
-      AOOSCOPE_BRIGHTNESS: ${AOOSCOPE_BRIGHTNESS:-100}
-      PVE_TOKEN_FILE: ${PVE_TOKEN_FILE:-}
-      PVE_CA_FILE: ${PVE_CA_FILE:-}
+      AOOSCOPE_DISPLAY_MODE: real
     security_opt:
       - no-new-privileges:true
     healthcheck:
       test:
-        - CMD-SHELL
-        - >-
-          python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/',timeout=3).read(1)"
-          && pgrep -f 'python3 -m aooscope.telemetry' >/dev/null
-          && pgrep -f 'python3 -m aooscope.supervisor' >/dev/null
-          && pgrep -x asterctl >/dev/null
+        - CMD
+        - /usr/local/bin/aooscope
+        - health
       interval: 30s
       timeout: 5s
       retries: 5

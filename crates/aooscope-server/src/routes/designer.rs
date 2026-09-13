@@ -9,10 +9,17 @@ use axum::{
     response::Response,
 };
 use image::ImageEncoder;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs;
 
 type RouteError = (StatusCode, Json<Value>);
+
+#[derive(Deserialize)]
+pub struct OrbitPresetRequest {
+    source_asset_id: String,
+    display_name: Option<String>,
+}
 
 fn error(status: StatusCode, message: &str) -> RouteError {
     (status, Json(json!({"ok":false,"error":message})))
@@ -81,9 +88,9 @@ fn factory_page(template: &str, id: &str) -> Option<Page> {
             "Compute",
             true,
             vec![
-                json!({"id":"compute-cpu-gauge","type":"gauge","binding":"aooscope_pve_cpu_pct","x":360,"y":96,"width":240,"height":220,"z":1}),
                 json!({"id":"compute-gpu-gauge","type":"gauge","binding":"aooscope_hardware_gpu_busy_pct","x":40,"y":96,"width":240,"height":220,"z":1}),
                 json!({"id":"compute-gpu-value","type":"value","binding":"aooscope_hardware_gpu_busy_pct","x":80,"y":175,"width":160,"height":84,"z":5}),
+                json!({"id":"compute-cpu-gauge","type":"gauge","binding":"aooscope_pve_cpu_pct","x":360,"y":96,"width":240,"height":220,"z":1}),
                 json!({"id":"compute-cpu-value","type":"value","binding":"aooscope_pve_cpu_pct","x":400,"y":175,"width":160,"height":84,"z":5}),
                 json!({"id":"compute-gtt-gauge","type":"gauge","binding":"aooscope_hardware_gpu_gtt_pct","x":680,"y":96,"width":240,"height":220,"z":1}),
                 json!({"id":"compute-gtt-value","type":"value","binding":"aooscope_hardware_gpu_gtt_pct","x":720,"y":175,"width":160,"height":84,"z":5}),
@@ -365,9 +372,12 @@ pub async fn get_media(
 
 pub async fn create_orbit_preset(
     State(state): State<crate::state::AppState>,
+    Json(body): Json<OrbitPresetRequest>,
 ) -> Result<Json<MediaPreset>, RouteError> {
     let store = MediaStore::new(&state.paths.root).map_err(media_error)?;
-    let preset = store.ensure_cloud9_orbit().map_err(media_error)?;
+    let preset = store
+        .ensure_orbit(&body.source_asset_id, body.display_name.as_deref())
+        .map_err(media_error)?;
     let mut pages = load_pages(&state.paths).map_err(config_error)?;
     if aooscope_render::MediaStore::migrate_splash(&mut pages, &preset) {
         pages.revision += 1;

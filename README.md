@@ -32,7 +32,7 @@ It is a fork and substantial rewrite of `xavtb78/aoostar-proxmox-lcd`, while kee
 - **Provider secrets stay private** — saved separately with mode `0600` and never returned by the settings API.
 - **Software brightness schedule** — choose a base luminance and schedules such as `22:00–08:00 → 70%`.
 - **Failure isolation** — an offline provider does not stop the LCD.
-- **Pull-and-run container** — no Rust/Python toolchain required on the target system.
+- **Pull-and-run container** — no development toolchain required on the target system.
 
 > **Brightness note:** no documented native WTR MAX backlight command is currently exposed by `aoostar-rs`. AooScope brightness is therefore software luminance: it scales the rendered pixels, not the physical backlight power.
 
@@ -113,9 +113,11 @@ Provider APIs + Linux sysfs
           ├── sensors/*.txt ─────┐
           └── state.json         │
                                  ▼
-Admin UI ── settings.json ─► display supervisor ─► asterctl ─► AOOSTAR LCD
-              │                   ▲
-              └─ private secrets ─┘
+Rust/Axum + embedded Svelte UI
+              │
+     state, providers, renderer
+              │
+       asterctl-lcd driver ─► AOOSTAR LCD
 ```
 
 AooScope stays in one container. It does **not** require host networking, the Docker socket, privileged mode or a monitoring daemon installed on the Proxmox host.
@@ -131,10 +133,7 @@ See [`SECURITY.md`](SECURITY.md).
 ## 🛠️ Development
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install flask pillow
-python -m unittest discover -s tests -p 'test_aooscope_*.py' -v
+cargo xtask check
 bash tests/test_deployment.sh
 ```
 
@@ -147,6 +146,6 @@ docker build -t aooscope:dev .
 ## 🙏 Credits
 
 - [`xavtb78/aoostar-proxmox-lcd`](https://github.com/xavtb78/aoostar-proxmox-lcd) — project this fork started from.
-- [`zehnm/aoostar-rs`](https://github.com/zehnm/aoostar-rs) — reverse-engineered AOOSTAR display protocol and `asterctl`/`aster-sysinfo`.
+- [`zehnm/aoostar-rs`](https://github.com/zehnm/aoostar-rs) — pinned `asterctl-lcd` display protocol crate.
 
 AooScope is independent and is not affiliated with or endorsed by AOOSTAR. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

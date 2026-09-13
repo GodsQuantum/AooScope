@@ -17,7 +17,6 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ ./crates/
 COPY xtask/ ./xtask/
 COPY tests/fixtures/ ./tests/fixtures/
-COPY tests/test_repo_hygiene.py ./tests/test_repo_hygiene.py
 COPY --from=frontend-check /src/frontend/build ./frontend/build
 
 FROM rust-base AS rust-check

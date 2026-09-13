@@ -92,23 +92,23 @@ impl MediaStore {
         Ok(presets)
     }
 
-    pub fn ensure_cloud9_orbit(&self) -> Result<MediaPreset, MediaError> {
+    pub fn ensure_orbit(
+        &self,
+        source_asset_id: &str,
+        display_name: Option<&str>,
+    ) -> Result<MediaPreset, MediaError> {
         let mut document = self.load()?;
-        if let Some(preset) = document.presets.get("cloud-9-orbit") {
-            return Ok(preset.clone());
-        }
-        let source = document
+        document
             .assets
-            .values()
-            .find(|asset| is_cloud9_source_name(&asset.name))
-            .ok_or_else(|| MediaError::NotFound("Cloud 9 source asset".into()))?;
+            .get(source_asset_id)
+            .ok_or_else(|| MediaError::NotFound(source_asset_id.into()))?;
         let mut settings = BTreeMap::new();
         settings.insert("fps".into(), Value::from(5));
         settings.insert("speed_seconds".into(), Value::from(4));
         let preset = MediaPreset {
-            id: "cloud-9-orbit".into(),
-            name: "Cloud 9 · Orbit".into(),
-            source_asset_id: source.id.clone(),
+            id: "orbit".into(),
+            name: display_name.unwrap_or("Orbit").into(),
+            source_asset_id: source_asset_id.into(),
             settings,
             extra: Default::default(),
         };
@@ -269,18 +269,6 @@ impl MediaStore {
         let _ = fs::remove_file(self.media_root.join(asset.stored_name));
         Ok(())
     }
-}
-
-fn is_cloud9_source_name(name: &str) -> bool {
-    let stem = Path::new(name)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or(name)
-        .to_ascii_lowercase();
-    stem == "cloud 9"
-        || stem.strip_prefix("cloud 9").is_some_and(|suffix| {
-            suffix.starts_with(' ') || suffix.starts_with('-') || suffix.starts_with('_')
-        })
 }
 
 fn format_details(format: ImageFormat) -> Result<(&'static str, &'static str), MediaError> {

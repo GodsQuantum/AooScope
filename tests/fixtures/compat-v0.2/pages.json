@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "revision": 3,
+  "carousel": ["page-home"],
+  "pages": {
+    "page-home": {
+      "id": "page-home",
+      "name": "Home",
+      "enabled": true,
+      "duration": 8,
+      "template_id": "home",
+      "revision": 4,
+      "background": {"color": "#071019"},
+      "layers": [
+        {
+          "id": "cpu-value",
+          "type": "value",
+          "binding": "aooscope_pve_cpu_pct",
+          "x": 40,
+          "y": 40,
+          "width": 220,
+          "height": 90,
+          "z": 10,
+          "opacity": 1.0,
+          "clip": false,
+          "color": "#ffffff",
+          "unit": "%",
+          "fallback": "--"
+        }
+      ]
+    }
+  }
+}
