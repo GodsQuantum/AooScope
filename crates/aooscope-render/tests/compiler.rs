@@ -73,6 +73,20 @@ fn text_and_bound_values_are_rasterized() {
 }
 
 #[test]
+fn vertical_bar_fills_from_the_bottom() {
+    let root = temp_root("vertical-bar");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let page: Page = serde_json::from_value(json!({"id":"bars","name":"Bars","enabled":true,"duration":8,"revision":1,"background":{"color":"#071019"},"layers":[{"id":"v","type":"bar","binding":"aooscope_pve_cpu_pct","x":10,"y":10,"width":20,"height":100,"z":1,"color":"#35d9ff","orientation":"vertical"}]})).unwrap();
+    let state = StateDocument {
+        pve: Some(json!({"cpu_pct": 50})),
+        ..Default::default()
+    };
+    let image = compile_page(&page, &state, &media, 100, 0.0).unwrap().image;
+    assert_eq!(image.get_pixel(15, 20).0, [29, 38, 50]);
+    assert_eq!(image.get_pixel(15, 80).0, [53, 217, 255]);
+}
+
+#[test]
 fn factory_semantics_cover_home_storage_compute_media_and_splash() {
     let root = temp_root("goldens");
     let media = aooscope_render::MediaStore::new(&root).unwrap();

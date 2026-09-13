@@ -1,42 +1,34 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import type { components } from '$lib/api/schema';
-  import { getJson } from '$lib/api/client';
+  import { onDestroy, onMount } from 'svelte';
+  import { requestBlob, requestJson } from '$lib/api/client';
   import { connectStatusEvents } from '$lib/api/live';
+  import type { components } from '$lib/api/schema';
+  import Canvas from '$lib/designer/Canvas.svelte';
+  import Inspector from '$lib/designer/Inspector.svelte';
+  import WidgetPalette from '$lib/designer/WidgetPalette.svelte';
   import DisplayStatus from '$lib/components/DisplayStatus.svelte';
   import Tabs from '$lib/components/Tabs.svelte';
-
+  import { clampRect, createWidgetId, isLatestRequest, type Layer, type Metric, type Page, type WidgetType } from '$lib/designer/model';
   type StatusDto = components['schemas']['StatusDto'];
   const tabs = ['Pages', 'Media', 'Display', 'Providers'] as const;
-  let active = $state<string>('Pages');
-  let status = $state<StatusDto>({
-    version: '0.3.0-dev', brightness: 100, native_brightness: false,
-    device_present: false, updated_unix: null
-  });
-  let error = $state('');
+  let active = $state<string>('Pages'); let status = $state<StatusDto>({ version: '0.3.0-dev', brightness: 100, native_brightness: false, device_present: false, updated_unix: null });
+  let pages = $state<{ id: string; name: string; revision: number }[]>([]); let page = $state<Page | undefined>(); let metrics = $state<Metric[]>([]); let selected = $state<string>(); let error = $state(''); let previewUrl = $state<string>(); let pageRequestGeneration = 0;
   const connectionLabel = $derived(status.device_present ? 'Display online' : 'Display offline');
-
-  onMount(() => {
-    let active = true;
-    void getJson('/api/status').then((value) => { if (active) status = value; })
-      .catch((err) => { if (active) error = err instanceof Error ? err.message : String(err); });
-    const disconnect = connectStatusEvents((value) => { if (active) status = value; });
-    return () => { active = false; disconnect(); };
-  });
+  onMount(() => { let alive = true; Promise.all([requestJson<{ pages: typeof pages }>('/api/pages'), requestJson<{ metrics: Metric[] }>('/api/metrics'), requestJson<{ providers: unknown[] }>('/api/providers/catalog')]).then(([listed, catalog]) => { if (!alive) return; pages = listed.pages; metrics = catalog.metrics; if (pages[0]) return loadPage(pages[0].id, () => alive); }).catch((e) => { if (alive) error = String(e); }); requestJson<StatusDto>('/api/status').then((v) => { if (alive) status = v; }).catch(() => {}); const disconnect = connectStatusEvents((v) => { if (alive) status = v; }); return () => { alive = false; disconnect(); }; });
+  function loadPage(id: string, alive = () => true) { const generation = ++pageRequestGeneration; return requestJson<Page>(`/api/pages/${id}`).then((v) => { if (alive() && isLatestRequest(generation, pageRequestGeneration)) { page = v; selected = undefined; } return v; }).catch((e) => { if (alive() && isLatestRequest(generation, pageRequestGeneration)) error = String(e); throw e; }); }
+  function selectPage(id: string) { loadPage(id).catch(() => {}); }
+  function addWidget(type: WidgetType, extra?: Record<string, unknown>) { if (!page) return; const id = createWidgetId(); page = { ...page, layers: [...page.layers, { id, type, ...extra, x: 24, y: 24, width: type === 'text' ? 240 : 160, height: type === 'text' ? 48 : 80, z: page.layers.length + 1, text: type === 'text' ? 'Texte' : undefined }] }; selected = id; }
+  function updateLayer(id: string, changes: Partial<Layer>) { if (!page) return; page = { ...page, layers: page.layers.map((layer) => layer.id === id ? { ...layer, ...clampRect({ ...layer, ...changes }) } : layer) }; }
+  async function save() { if (!page) return; try { page = await requestJson<Page>(`/api/pages/${page.id}`, 'PUT', page); } catch (e) { error = String(e); } }
+  async function preview() { if (!page) return; try { const blob = await requestBlob('/api/preview', 'POST', { page }); if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = URL.createObjectURL(blob); } catch (e) { error = String(e); } }
+  async function apply() { try { await requestJson('/api/apply', 'POST', {}); } catch (e) { error = String(e); } }
+  function closePreview() { if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = undefined; }
+  onDestroy(closePreview);
 </script>
-
 <svelte:head><title>AooScope</title></svelte:head>
-<main>
-  <header><div><h1>AooScope</h1><p>{connectionLabel}</p></div><DisplayStatus {status} /></header>
-  <Tabs tabs={tabs} {active} onselect={(tab) => active = tab} />
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-  <section class="workspace"><h2>{active}</h2><p>Rust + Svelte compatibility foundation</p></section>
-</main>
-
+<main><header><div><h1>AooScope</h1><p>{connectionLabel}</p></div><DisplayStatus {status} /></header><Tabs tabs={tabs} {active} onselect={(tab) => active = tab} />
+{#if error}<p class="error" role="alert">{error}</p>{/if}
+{#if active === 'Pages'}<section class="designer"><aside class="pages"><h2>Pages</h2>{#each pages as item}<button class:active={item.id === page?.id} onclick={() => selectPage(item.id)}>{item.name}</button>{/each}<div class="actions"><button onclick={save}>Enregistrer</button><button onclick={preview}>Aperçu</button><button onclick={apply}>Appliquer</button></div></aside><section class="work"><Canvas layers={page?.layers ?? []} background={page?.background?.color} {selected} onselect={(id) => selected = id} onchange={updateLayer} />{#if previewUrl}<section class="preview" aria-label="Aperçu"><div><h2>Aperçu</h2><button onclick={closePreview}>Fermer</button></div><img src={previewUrl} alt="Aperçu de la page" /></section>{/if}</section><aside class="tools"><WidgetPalette onadd={addWidget} /><Inspector layer={page?.layers.find((l) => l.id === selected)} {metrics} onchange={(changes) => selected && updateLayer(selected, changes)} /></aside></section>{:else}<section class="workspace"><h2>{active}</h2><p>Cette section conserve son statut pour les prochaines tâches.</p></section>{/if}</main>
 <style>
-  :global(*){box-sizing:border-box} :global(body){margin:0;background:#071019;color:#eaf8ff;font-family:Inter,system-ui,sans-serif}
-  main{max-width:1200px;margin:auto;padding:24px} header{display:flex;justify-content:space-between;gap:24px;align-items:center}
-  h1{margin:0;font-size:2rem} p{color:#9db5c5}.workspace{margin-top:24px;border:1px solid #1e3948;border-radius:16px;padding:24px;background:#0b1720}
-  :global(.tabs){display:flex;gap:8px;margin-top:24px;flex-wrap:wrap}:global(.tabs button){background:#102630;color:#cfefff;border:1px solid #244858;border-radius:10px;padding:10px 14px}:global(.tabs button.active){background:#183b49;border-color:#5dd9ff}
-  :global(.status-card){display:grid;gap:3px;text-align:right}.error{color:#ff9a9a}
+:global(*){box-sizing:border-box}:global(body){margin:0;background:#071019;color:#eaf8ff;font-family:Inter,system-ui,sans-serif}main{max-width:1400px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;gap:24px;align-items:center}h1{margin:0;font-size:2rem}p{color:#9db5c5}.designer{display:grid;grid-template-columns:160px minmax(0,1fr) 230px;gap:16px;margin-top:24px}.pages,.tools,.workspace{border:1px solid #1e3948;border-radius:12px;padding:12px;background:#0b1720}.pages{display:grid;align-content:start;gap:7px}.pages button,.actions button{background:#102630;color:#cfefff;border:1px solid #244858;border-radius:7px;padding:8px;text-align:left}.pages button.active{border-color:#5dd9ff}.actions{display:grid;gap:6px;margin-top:10px}.work{min-width:0;border:1px solid #1e3948;border-radius:12px;padding:12px;background:#0b1720;display:grid;gap:12px;align-items:center}.preview{display:grid;gap:8px}.preview div{display:flex;justify-content:space-between;align-items:center}.preview img{max-width:100%;height:auto}.tools{display:grid;align-content:start;gap:18px}.error{color:#ff9a9a}.workspace{margin-top:24px}:global(.tabs){display:flex;gap:8px;margin-top:24px;flex-wrap:wrap}:global(.tabs button.active){background:#183b49;border-color:#5dd9ff}@media(max-width:800px){main{padding:12px}.designer{grid-template-columns:1fr}.pages{order:0}.tools{order:2}.work{order:1}}
 </style>
