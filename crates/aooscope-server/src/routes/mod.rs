@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod designer;
 pub mod events;
 pub mod health;
 pub mod pages;
