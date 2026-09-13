@@ -138,10 +138,10 @@ python -m unittest discover -s tests -p 'test_aooscope_*.py' -v
 bash tests/test_deployment.sh
 ```
 
-Local container build:
+The public `compose.yaml` is intentionally pull-only and always consumes the published GHCR image. For local image development, build the Dockerfile directly instead of adding a second Compose file:
 
 ```bash
-docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+docker build -t aooscope:dev .
 ```
 
 ## 🙏 Credits
