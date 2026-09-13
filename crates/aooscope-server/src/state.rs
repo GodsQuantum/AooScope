@@ -1,16 +1,23 @@
 use crate::{APP_VERSION, dto::StatusDto};
 use aooscope_config::{AppPaths, ConfigError, atomic_write_json, load_settings, load_state};
-use aooscope_types::MediaDisplayEvent;
+use aooscope_display::{
+    DisplayDriver, DisplayError, DisplayScheduler, DisplayWorker, FrameSource, PromotedRevision,
+};
+use aooscope_render::{MediaStore, RevisionStore, compile_document};
+use aooscope_types::{MediaDisplayEvent, PagesDocument};
+use image::RgbImage;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AppState {
     pub paths: AppPaths,
     pub device: PathBuf,
     status_tx: watch::Sender<StatusDto>,
     media_tx: watch::Sender<MediaDisplayEvent>,
+    promoted_tx: watch::Sender<Option<PromotedRevision>>,
+    pub display: DisplayWorker,
 }
 
 impl AppState {
@@ -19,12 +26,42 @@ impl AppState {
         let initial = status_snapshot(&paths, &device);
         let (status_tx, _) = watch::channel(initial);
         let (media_tx, _) = watch::channel(MediaDisplayEvent::default());
+        let promoted = RevisionStore::new(&paths.root)
+            .current()
+            .map(|pointer| PromotedRevision::new(pointer.revision_id));
+        let (promoted_tx, _) = watch::channel(promoted);
         Self {
             paths,
             device,
             status_tx,
             media_tx,
+            promoted_tx,
+            display: DisplayWorker::disabled(),
         }
+    }
+
+    pub fn with_display_driver<D: DisplayDriver + 'static>(mut self, driver: D) -> Self {
+        self.display = DisplayWorker::spawn(driver, 8);
+        self
+    }
+
+    pub fn start_display_runtime(
+        &self,
+    ) -> tokio::task::JoinHandle<Result<(), aooscope_display::DisplayError>> {
+        let worker = self.display.clone();
+        let promoted = self.promoted_tx.subscribe();
+        let source = RevisionFrameSource::new(self.paths.clone());
+        tokio::spawn(DisplayScheduler::default().run(worker, source, promoted, false, 0))
+    }
+
+    pub fn promote_display(&self, revision_id: impl Into<String>) {
+        self.promoted_tx
+            .send_replace(Some(PromotedRevision::new(revision_id)));
+    }
+
+    #[cfg(test)]
+    fn subscribe_promoted(&self) -> watch::Receiver<Option<PromotedRevision>> {
+        self.promoted_tx.subscribe()
     }
 
     pub fn with_device(mut self, device: impl Into<PathBuf>) -> Self {
@@ -100,6 +137,77 @@ impl AppState {
     }
 }
 
+pub struct RevisionFrameSource {
+    paths: AppPaths,
+    revision_id: Option<String>,
+    started: Instant,
+}
+
+impl RevisionFrameSource {
+    pub fn new(paths: AppPaths) -> Self {
+        Self {
+            paths,
+            revision_id: None,
+            started: Instant::now(),
+        }
+    }
+}
+
+impl FrameSource for RevisionFrameSource {
+    fn frame(
+        &mut self,
+        revision: &PromotedRevision,
+        animation: bool,
+    ) -> Result<RgbImage, DisplayError> {
+        if self.revision_id.as_deref() != Some(&revision.id) {
+            if revision.id.is_empty() || revision.id.contains(['/', '\\']) {
+                return Err(DisplayError::Source("invalid revision id".into()));
+            }
+            self.revision_id = Some(revision.id.clone());
+            self.started = Instant::now();
+        }
+
+        let source_path = self
+            .paths
+            .root
+            .join("compiled")
+            .join(&revision.id)
+            .join("source-pages.json");
+        let source = std::fs::read(&source_path).map_err(|error| {
+            DisplayError::Source(format!("cannot read {}: {error}", source_path.display()))
+        })?;
+        let pages: PagesDocument = serde_json::from_slice(&source).map_err(|error| {
+            DisplayError::Source(format!("invalid {}: {error}", source_path.display()))
+        })?;
+        let state = load_state(&self.paths)
+            .map_err(|error| DisplayError::Source(format!("cannot load state: {error}")))?;
+        let settings = load_settings(&self.paths)
+            .map_err(|error| DisplayError::Source(format!("cannot load settings: {error}")))?;
+        let media = MediaStore::new(&self.paths.root)
+            .map_err(|error| DisplayError::Source(format!("cannot open media store: {error}")))?;
+        let elapsed = self.started.elapsed().as_secs_f64();
+        let phase = if animation {
+            (elapsed * 100.0 / 4.0) % 100.0
+        } else {
+            0.0
+        };
+        let compiled = compile_document(&pages, &state, &media, settings.display.brightness, phase)
+            .map_err(|error| DisplayError::Source(format!("cannot render revision: {error}")))?;
+        if compiled.order.is_empty() {
+            return Err(DisplayError::Source(
+                "revision has no carousel frames".into(),
+            ));
+        }
+        let slot = (elapsed / f64::from(compiled.switch_seconds.max(1))) as usize;
+        let page = compiled
+            .order
+            .get(slot % compiled.order.len())
+            .and_then(|index| compiled.pages.get(index.saturating_sub(1)))
+            .ok_or_else(|| DisplayError::Source("revision has no carousel frames".into()))?;
+        Ok(page.image.clone())
+    }
+}
+
 fn status_snapshot(paths: &AppPaths, device: &Path) -> StatusDto {
     let brightness = load_settings(paths)
         .map(|settings| settings.display.brightness)
@@ -114,5 +222,86 @@ fn status_snapshot(paths: &AppPaths, device: &Path) -> StatusDto {
         native_brightness: false,
         device_present: device.exists(),
         updated_unix,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aooscope_display::FrameSource;
+    use serde_json::json;
+    use std::fs;
+
+    fn fixture(name: &str) -> (AppPaths, PathBuf) {
+        let root =
+            std::env::temp_dir().join(format!("aooscope-server-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("compiled/r1")).unwrap();
+        fs::write(
+            root.join("compiled/r1/source-pages.json"),
+            serde_json::to_vec(&json!({
+                "schema_version": 1, "revision": 1, "carousel": ["home"],
+                "pages": {"home": {
+                    "id": "home", "name": "Home", "enabled": true, "duration": 8,
+                    "revision": 1, "background": {"color": "#071019"}, "layers": [{
+                        "id": "value", "type": "value", "binding": "aooscope_pve_cpu_pct",
+                        "x": 20, "y": 20, "width": 240, "height": 80, "z": 1,
+                        "color": "#35d9ff"
+                    }]
+                }}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("settings.json"),
+            br#"{"display":{"brightness":100}}"#,
+        )
+        .unwrap();
+        fs::write(root.join("state.json"), br#"{"pve":{"cpu_pct":10}}"#).unwrap();
+        (AppPaths::new(&root), root)
+    }
+
+    #[test]
+    fn promoted_source_renders_current_state_without_reapplying() {
+        let (paths, root) = fixture("source");
+        let mut source = RevisionFrameSource::new(paths);
+        let revision = PromotedRevision::new("r1");
+        let first = source.frame(&revision, false).unwrap();
+        assert!(first.pixels().any(|pixel| pixel.0 != [7, 16, 25]));
+
+        fs::write(root.join("state.json"), br#"{"pve":{"cpu_pct":90}}"#).unwrap();
+        let second = source.frame(&revision, false).unwrap();
+        assert_ne!(first.as_raw(), second.as_raw());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_promoted_source_is_reported_without_panicking() {
+        let (paths, root) = fixture("missing");
+        let mut source = RevisionFrameSource::new(paths);
+        let error = source
+            .frame(&PromotedRevision::new("missing"), false)
+            .unwrap_err();
+        assert!(matches!(error, DisplayError::Source(_)));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn app_state_restores_promoted_revision_on_restart() {
+        let (paths, root) = fixture("restart");
+        RevisionStore::new(&root).promote("r1").unwrap();
+
+        let state = AppState::new(paths);
+
+        assert_eq!(
+            state
+                .subscribe_promoted()
+                .borrow()
+                .as_ref()
+                .map(|revision| revision.id.as_str()),
+            Some("r1")
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }
