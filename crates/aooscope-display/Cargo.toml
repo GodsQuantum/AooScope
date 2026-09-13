@@ -1,0 +1,13 @@
+[package]
+name = "aooscope-display"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+asterctl-lcd = { git = "https://github.com/zehnm/aoostar-rs", rev = "2f4d95957d2d61f9fe5cd27e4cf14bd2ae566f63" }
+image.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

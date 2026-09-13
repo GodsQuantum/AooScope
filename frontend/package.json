@@ -9,7 +9,8 @@
     "api:types": "openapi-typescript openapi.json -o src/lib/api/schema.d.ts",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest",
-    "build": "vite build"
+    "build": "vite build",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "3.0.10",
@@ -23,6 +24,7 @@
     "svelte-check": "4.7.6",
     "typescript": "5.9.3",
     "vite": "8.3.0",
-    "vitest": "5.0.0"
+    "vitest": "5.0.0",
+    "@playwright/test": "1.63.0"
   }
 }

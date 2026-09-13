@@ -4,6 +4,54 @@
  */
 
 export interface paths {
+    "/api/display/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_capabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/display/luminance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["set_luminance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/display/power": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["set_power"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -20,6 +68,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_metrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pages": {
         parameters: {
             query?: never;
@@ -28,6 +92,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["get_pages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/providers/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_provider_catalog"];
         put?: never;
         post?: never;
         delete?: never;
@@ -72,6 +152,25 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        DisplayCapabilitiesDto: {
+            /** Format: int32 */
+            height: number;
+            native_brightness: boolean;
+            power_control: boolean;
+            power_on: boolean;
+            /** Format: int32 */
+            width: number;
+        };
+        DisplayLuminanceRequest: {
+            /** Format: int32 */
+            value: number;
+        };
+        DisplayPowerDto: {
+            on: boolean;
+        };
+        DisplayPowerRequest: {
+            on: boolean;
+        };
         DisplaySettings: {
             brand?: string;
             /** Format: int32 */
@@ -87,6 +186,26 @@ export interface components {
         HealthDto: {
             ok: boolean;
             version: string;
+        };
+        MetricCatalogDto: {
+            metrics: components["schemas"]["MetricDescriptor"][];
+        };
+        MetricDescriptor: {
+            category: string;
+            demo_value?: unknown;
+            id: string;
+            label: string;
+            /** Format: double */
+            max?: number | null;
+            /** Format: double */
+            min?: number | null;
+            online: boolean;
+            provider_id: string;
+            provider_name: string;
+            recommended_widgets: components["schemas"]["WidgetKind"][];
+            unit: string;
+            value?: unknown;
+            value_type: string;
         };
         PageSummaryDto: {
             /** Format: int32 */
@@ -105,6 +224,16 @@ export interface components {
             revision: number;
             /** Format: int32 */
             schema_version: number;
+        };
+        ProviderCatalogDto: {
+            providers: components["schemas"]["ProviderDescriptor"][];
+        };
+        ProviderDescriptor: {
+            categories: string[];
+            credential_fields: string[];
+            icon: string;
+            id: string;
+            name: string;
         };
         PublicProviderDto: {
             enabled: boolean;
@@ -141,6 +270,8 @@ export interface components {
             updated_unix?: number | null;
             version: string;
         };
+        /** @enum {string} */
+        WidgetKind: "text" | "value" | "bar" | "gauge" | "ring" | "badge" | "sparkline" | "image" | "animation";
     };
     responses: never;
     parameters: never;
@@ -150,6 +281,71 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_capabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisplayCapabilitiesDto"];
+                };
+            };
+        };
+    };
+    set_luminance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisplayLuminanceRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusDto"];
+                };
+            };
+        };
+    };
+    set_power: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisplayPowerRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisplayPowerDto"];
+                };
+            };
+        };
+    };
     get_health: {
         parameters: {
             query?: never;
@@ -169,6 +365,25 @@ export interface operations {
             };
         };
     };
+    get_metrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricCatalogDto"];
+                };
+            };
+        };
+    };
     get_pages: {
         parameters: {
             query?: never;
@@ -184,6 +399,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PagesListDto"];
+                };
+            };
+        };
+    };
+    get_provider_catalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCatalogDto"];
                 };
             };
         };

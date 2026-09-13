@@ -1,34 +1,32 @@
 #!/usr/bin/env bash
 set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$root"
 fail=0
-pass(){ printf 'PASS: %s\n' "$1"; }
-fail_check(){ printf 'FAIL: %s\n' "$1"; fail=1; }
-check(){ if eval "$2"; then pass "$1"; else fail_check "$1"; fi; }
-PROD_DOCKERFILE=Dockerfile.python
-RUST_DOCKERFILE=Dockerfile
-
-check "production Docker build is multi-stage" "grep -Eq '^FROM rust:.*[Aa][Ss] builder' \"$PROD_DOCKERFILE\""
-check "production aoostar-rs source is pinned" "grep -Eq '^ARG AOOSTAR_RS_REF=[0-9a-f]{40}$' \"$PROD_DOCKERFILE\""
-check "production runtime copies generic package" "grep -Fq 'COPY aooscope/ /app/aooscope/' \"$PROD_DOCKERFILE\""
-check "production runtime uses Waitress" "grep -Fq 'python3-waitress' \"$PROD_DOCKERFILE\" && grep -Fq 'waitress-serve' start.sh"
-check "production runtime has no flask-cors dependency" "! grep -Fq 'flask-cors' \"$PROD_DOCKERFILE\""
-check "production runtime uses generated defaults" "grep -Fq 'COPY defaults/ /app/defaults/' \"$PROD_DOCKERFILE\" && ! grep -Fq 'COPY cfg/' \"$PROD_DOCKERFILE\""
-check "GHCR workflow still publishes Python production image" "grep -Fq 'file: Dockerfile.python' .github/workflows/container.yml"
-check "Rust foundation pins Rust 1.98.1" "grep -Fq 'FROM rust:1.98.1-trixie AS rust-base' \"$RUST_DOCKERFILE\""
-check "Rust foundation pins Node 24.21.0" "grep -Fq 'FROM node:24.21.0-bookworm-slim AS frontend-check' \"$RUST_DOCKERFILE\""
-check "Rust runtime contains single AooScope binary" "grep -Fq 'COPY --from=rust-builder /out/aooscope /usr/local/bin/aooscope' \"$RUST_DOCKERFILE\""
-check "public compose pulls GHCR image" "grep -Fq 'ghcr.io/godsquantum/aooscope' compose.yaml && ! grep -Eq '^[[:space:]]*build:' compose.yaml"
-check "repository ships exactly one compose file" "test "$(find . -maxdepth 1 -type f \( -name 'compose*.yaml' -o -name 'compose*.yml' \) | wc -l)" -eq 1"
-check "public compose is pull-only" "! grep -Eq '^[[:space:]]*build:' compose.yaml"
-check "compose does not use host networking" "! grep -Eq '^[[:space:]]*network_mode:[[:space:]]*host' compose.yaml"
-check "compose device is configurable" "grep -Fq 'AOOSCOPE_DEVICE' compose.yaml"
-check "compose config path is configurable" "grep -Fq 'AOOSCOPE_CONFIG_DIR' compose.yaml"
-check "production runtime starts telemetry" "grep -Fq 'python3 -m aooscope.telemetry &' start.sh"
-check "production runtime starts display supervisor" "grep -Fq 'python3 -m aooscope.supervisor &' start.sh"
-check "production runtime starts animation engine" "grep -Fq 'python3 -m aooscope.animation_runtime' start.sh"
-check "healthcheck covers telemetry/display/UI" "grep -Fq 'aooscope.telemetry' compose.yaml && grep -Fq 'aooscope.supervisor' compose.yaml && grep -Fq 'asterctl' compose.yaml"
-check "admin JavaScript syntax is valid" "node --check web/admin.js >/dev/null"
-check "no legacy host helper is shipped" "test ! -e proxmox-sensors.sh"
-check "local data is gitignored" "grep -Fxq 'data/' .gitignore && grep -Fxq '.venv/' .gitignore"
-
+check() { local name=$1; shift; if eval "$*"; then printf 'PASS: %s\n' "$name"; else printf 'FAIL: %s\n' "$name"; fail=1; fi; }
+contains() { grep -Fq -- "$1" "$2"; }
+not_contains() { ! grep -Fq -- "$1" "$2"; }
+check canonical_dockerfile_contains 'grep -Fq "FROM rust:1.98.1-trixie AS rust-base" Dockerfile'
+check canonical_dockerfile_contains 'grep -Fq "FROM node:24.21.0-bookworm-slim AS frontend-check" Dockerfile'
+check rust_build_packages_are_present 'awk "/^FROM rust:/{rust=1} /^FROM debian:/{rust=0} rust" Dockerfile | grep -Eq "pkg-config[[:space:]]+libudev-dev"'
+check canonical_dockerfile_embeds_frontend 'grep -Fq "COPY --from=frontend-check /src/frontend/build ./frontend/build" Dockerfile'
+check canonical_dockerfile_copies_one_binary 'grep -Fq "COPY --from=rust-builder /out/aooscope /usr/local/bin/aooscope" Dockerfile'
+check runtime_packages_are_minimal 'grep -Eq "ca-certificates[[:space:]]+libudev1[[:space:]]+tini[[:space:]]+tzdata" Dockerfile'
+check runtime_includes_libudev 'awk "/^FROM debian/{runtime=1} runtime" Dockerfile | grep -Eq "libudev1"'
+check no_python_or_node_runtime '! awk "/^FROM debian/{runtime=1} runtime" Dockerfile | grep -Eiq "python|node"'
+check no_waitress_or_asterctl_runtime '! grep -Fq waitress Dockerfile && ! grep -Fq asterctl Dockerfile'
+check compose_is_pull_only 'not_contains "    build:" compose.yaml'
+check exactly_one_compose 'test "$(find . -maxdepth 1 -type f \( -name "compose*.yaml" -o -name "compose*.yml" \) | wc -l)" -eq 1'
+check compose_has_real_display_mode 'contains "AOOSCOPE_DISPLAY_MODE: real" compose.yaml'
+check compose_has_generic_device 'contains "AOOSCOPE_DEVICE" compose.yaml && contains ":/dev/ttyACM0" compose.yaml'
+check compose_has_config_volume 'contains "AOOSCOPE_CONFIG_DIR" compose.yaml && contains ":/app/cfg" compose.yaml'
+check compose_has_rust_healthcheck 'contains "/usr/local/bin/aooscope" compose.yaml && contains "health" compose.yaml'
+check compose_has_no_host_network 'not_contains network_mode compose.yaml && not_contains privileged compose.yaml'
+check compose_has_no_legacy_environment 'not_contains AOOSCOPE_REFRESH_SECONDS compose.yaml && not_contains PVE_TOKEN_FILE compose.yaml'
+check asterctl_dependency_is_pinned 'grep -Eq "asterctl-lcd.*git.*rev|git.*https://github.com/zehnm/aoostar-rs.*rev" crates/aooscope-display/Cargo.toml'
+check cargo_lock_pins_asterctl 'grep -A5 -F "name = \"asterctl-lcd\"" Cargo.lock | grep -Eq "source = \"git\\+https://github.com/zehnm/aoostar-rs\\?rev=[0-9a-f]{40}"'
+check health_api_is_declared 'contains "/api/health" crates/aooscope-server/src/app.rs'
+check smoke_routes_are_declared 'contains "/api/status" crates/aooscope-server/src/app.rs && contains "/api/pages" crates/aooscope-server/src/app.rs && contains "/api/metrics" crates/aooscope-server/src/app.rs && contains "/api/media" crates/aooscope-server/src/app.rs'
+check no_legacy_runtime_paths 'test ! -e aooscope && test ! -e webui.py && test ! -e web && test ! -e start.sh && test ! -e Dockerfile.python'
+check no_python_tests 'test -z "$(find tests -type f \( -name "test_aooscope_*.py" -o -path "tests/parity/*" -o -name "designer_model_test.mjs" -o -name "test_repo_hygiene.py" \))"'
 exit "$fail"
