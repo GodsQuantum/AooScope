@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod assets;
+mod bootstrap;
 pub mod dto;
 pub mod error;
 pub mod metrics;
@@ -11,6 +12,7 @@ pub mod routes;
 pub mod state;
 
 pub use app::app;
+pub use bootstrap::bootstrap;
 pub use dto::StatusDto;
 pub use openapi::ApiDoc;
 pub use state::AppState;

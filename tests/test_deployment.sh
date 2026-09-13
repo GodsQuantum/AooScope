@@ -27,6 +27,7 @@ check asterctl_dependency_is_pinned 'grep -Eq "asterctl-lcd.*git.*rev|git.*https
 check cargo_lock_pins_asterctl 'grep -A5 -F "name = \"asterctl-lcd\"" Cargo.lock | grep -Eq "source = \"git\\+https://github.com/zehnm/aoostar-rs\\?rev=[0-9a-f]{40}"'
 check health_api_is_declared 'contains "/api/health" crates/aooscope-server/src/app.rs'
 check smoke_routes_are_declared 'contains "/api/status" crates/aooscope-server/src/app.rs && contains "/api/pages" crates/aooscope-server/src/app.rs && contains "/api/metrics" crates/aooscope-server/src/app.rs && contains "/api/media" crates/aooscope-server/src/app.rs'
+check ci_runs_oci_smoke 'contains "bash tests/test_oci_smoke.sh aooscope:rust-foundation" .github/workflows/ci.yml && contains "bash tests/test_runtime_executables.sh aooscope:rust-foundation" .github/workflows/ci.yml'
 check no_legacy_runtime_paths 'test ! -e aooscope && test ! -e webui.py && test ! -e web && test ! -e start.sh && test ! -e Dockerfile.python'
 check no_python_tests 'test -z "$(find tests -type f \( -name "test_aooscope_*.py" -o -path "tests/parity/*" -o -name "designer_model_test.mjs" -o -name "test_repo_hygiene.py" \))"'
 exit "$fail"

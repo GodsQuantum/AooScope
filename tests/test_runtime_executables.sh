@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -u
+set -Eeuo pipefail
 image=${1:?usage: $0 IMAGE}
 for executable in python python3 node waitress-serve asterctl; do
   if docker run --rm --entrypoint /bin/sh "$image" -c "command -v $executable >/dev/null 2>&1"; then

@@ -1,6 +1,6 @@
 use aooscope_config::AppPaths;
 use aooscope_display::{AoostarDisplayDriver, SimulatedDisplayDriver};
-use aooscope_server::{AppState, app};
+use aooscope_server::{AppState, app, bootstrap};
 use std::{
     env,
     ffi::OsString,
@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind: SocketAddr = env::var("AOOSCOPE_BIND")
         .unwrap_or_else(|_| "0.0.0.0:8765".into())
         .parse()?;
+    bootstrap(&AppPaths::new(&config_root))?;
     let state = AppState::new(AppPaths::new(config_root)).with_device(device.clone());
     let state = if env::var("AOOSCOPE_DISPLAY_MODE").as_deref() == Ok("real") {
         state.with_display_driver(AoostarDisplayDriver::open(device)?)
