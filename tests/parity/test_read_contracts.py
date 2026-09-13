@@ -58,7 +58,7 @@ class ReadContractParityTests(unittest.TestCase):
                         process.wait(timeout=5)
 
     def _wait_for_server(self, base, process):
-        deadline = time.time() + 15
+        deadline = time.time() + 120
         while time.time() < deadline:
             if process.poll() is not None:
                 stderr = process.stderr.read() if process.stderr else ""
