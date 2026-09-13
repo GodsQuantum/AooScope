@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "0.0.0.0:8765".into())
         .parse()?;
     let state = AppState::new(AppPaths::new(config_root));
+    let _media_poller = state.spawn_media_polling(std::time::Duration::from_secs(5));
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, "AooScope server listening");
     axum::serve(listener, app(state)).await?;

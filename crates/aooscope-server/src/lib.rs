@@ -6,6 +6,7 @@ pub mod dto;
 pub mod error;
 pub mod metrics;
 pub mod openapi;
+pub mod providers;
 pub mod routes;
 pub mod state;
 
