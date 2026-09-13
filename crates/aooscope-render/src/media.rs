@@ -1,9 +1,10 @@
 use aooscope_config::atomic_write_json;
-use aooscope_types::{MediaAsset, MediaDocument, PagesDocument};
+use aooscope_types::{MediaAsset, MediaDocument, MediaPreset, PagesDocument};
 use image::{ImageFormat, ImageReader};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs,
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -59,6 +60,7 @@ impl MediaStore {
             return Ok(MediaDocument {
                 schema_version: 1,
                 assets: Default::default(),
+                presets: Default::default(),
                 extra: Default::default(),
             });
         }
@@ -82,6 +84,63 @@ impl MediaStore {
             .get(id)
             .cloned()
             .ok_or_else(|| MediaError::NotFound(id.into()))
+    }
+
+    pub fn presets(&self) -> Result<Vec<MediaPreset>, MediaError> {
+        let mut presets = self.load()?.presets.into_values().collect::<Vec<_>>();
+        presets.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+        Ok(presets)
+    }
+
+    pub fn ensure_cloud9_orbit(&self) -> Result<MediaPreset, MediaError> {
+        let mut document = self.load()?;
+        if let Some(preset) = document.presets.get("cloud-9-orbit") {
+            return Ok(preset.clone());
+        }
+        let source = document
+            .assets
+            .values()
+            .find(|asset| is_cloud9_source_name(&asset.name))
+            .ok_or_else(|| MediaError::NotFound("Cloud 9 source asset".into()))?;
+        let mut settings = BTreeMap::new();
+        settings.insert("fps".into(), Value::from(5));
+        settings.insert("speed_seconds".into(), Value::from(4));
+        let preset = MediaPreset {
+            id: "cloud-9-orbit".into(),
+            name: "Cloud 9 · Orbit".into(),
+            source_asset_id: source.id.clone(),
+            settings,
+            extra: Default::default(),
+        };
+        document.presets.insert(preset.id.clone(), preset.clone());
+        self.save(&document)?;
+        Ok(preset)
+    }
+
+    pub fn migrate_splash(pages: &mut PagesDocument, preset: &MediaPreset) -> bool {
+        let Some(page) = pages.pages.values_mut().find(|page| page.name == "Splash") else {
+            return false;
+        };
+        if page
+            .layers
+            .iter()
+            .any(|layer| layer.layer_type == "animation")
+        {
+            return false;
+        }
+        let Some(layer) = page.layers.iter_mut().find(|layer| {
+            layer.layer_type == "image"
+                && layer.extra.get("asset_id").and_then(Value::as_str)
+                    == Some(preset.source_asset_id.as_str())
+        }) else {
+            return false;
+        };
+        layer.layer_type = "animation".into();
+        layer
+            .extra
+            .insert("preset_id".into(), Value::from(preset.id.as_str()));
+        page.revision += 1;
+        true
     }
 
     pub fn resolve(&self, id: &str) -> Result<PathBuf, MediaError> {
@@ -197,7 +256,12 @@ impl MediaStore {
             .ok_or_else(|| MediaError::NotFound(id.into()))?;
         let pages_value = serde_json::to_value(pages)
             .map_err(|e| MediaError::Invalid(format!("cannot inspect pages: {e}")))?;
-        if references_asset(&pages_value, id) {
+        if references_asset(&pages_value, id)
+            || document
+                .presets
+                .values()
+                .any(|preset| preset.source_asset_id == id)
+        {
             return Err(MediaError::InUse(id.into()));
         }
         document.assets.remove(id);
@@ -205,6 +269,18 @@ impl MediaStore {
         let _ = fs::remove_file(self.media_root.join(asset.stored_name));
         Ok(())
     }
+}
+
+fn is_cloud9_source_name(name: &str) -> bool {
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    stem == "cloud 9"
+        || stem.strip_prefix("cloud 9").is_some_and(|suffix| {
+            suffix.starts_with(' ') || suffix.starts_with('-') || suffix.starts_with('_')
+        })
 }
 
 fn format_details(format: ImageFormat) -> Result<(&'static str, &'static str), MediaError> {

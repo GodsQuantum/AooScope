@@ -141,6 +141,7 @@ pub struct RevisionFrameSource {
     paths: AppPaths,
     revision_id: Option<String>,
     started: Instant,
+    speed_seconds: f64,
 }
 
 impl RevisionFrameSource {
@@ -149,11 +150,74 @@ impl RevisionFrameSource {
             paths,
             revision_id: None,
             started: Instant::now(),
+            speed_seconds: 4.0,
         }
+    }
+
+    fn animation_settings(
+        &self,
+        pages: &PagesDocument,
+    ) -> Result<Option<(u32, f64)>, DisplayError> {
+        let media = MediaStore::new(&self.paths.root)
+            .map_err(|error| DisplayError::Source(format!("cannot open media store: {error}")))?;
+        let presets = media
+            .presets()
+            .map_err(|error| DisplayError::Source(format!("cannot read media presets: {error}")))?;
+        for id in &pages.carousel {
+            let Some(page) = pages.pages.get(id).filter(|page| page.enabled) else {
+                continue;
+            };
+            if let Some(layer) = page
+                .layers
+                .iter()
+                .find(|layer| layer.layer_type == "animation")
+            {
+                let preset = layer
+                    .extra
+                    .get("preset_id")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|id| presets.iter().find(|preset| preset.id == id));
+                let fps = preset
+                    .and_then(|preset| preset.settings.get("fps"))
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(u64::from(aooscope_display::DEFAULT_ANIMATION_FPS))
+                    as u32;
+                let speed = layer
+                    .extra
+                    .get("speed_seconds")
+                    .and_then(serde_json::Value::as_f64)
+                    .or_else(|| {
+                        preset
+                            .and_then(|preset| preset.settings.get("speed_seconds"))
+                            .and_then(serde_json::Value::as_f64)
+                    })
+                    .unwrap_or(4.0)
+                    .max(0.5);
+                return Ok(Some((fps, speed)));
+            }
+        }
+        Ok(None)
     }
 }
 
 impl FrameSource for RevisionFrameSource {
+    fn animation_fps(&mut self, revision: &PromotedRevision) -> Result<Option<u32>, DisplayError> {
+        let source_path = self
+            .paths
+            .root
+            .join("compiled")
+            .join(&revision.id)
+            .join("source-pages.json");
+        let pages: PagesDocument =
+            serde_json::from_slice(&std::fs::read(&source_path).map_err(|error| {
+                DisplayError::Source(format!("cannot read {}: {error}", source_path.display()))
+            })?)
+            .map_err(|error| {
+                DisplayError::Source(format!("invalid {}: {error}", source_path.display()))
+            })?;
+        Ok(self.animation_settings(&pages)?.map(|(fps, _)| fps))
+    }
+
     fn frame(
         &mut self,
         revision: &PromotedRevision,
@@ -179,6 +243,9 @@ impl FrameSource for RevisionFrameSource {
         let pages: PagesDocument = serde_json::from_slice(&source).map_err(|error| {
             DisplayError::Source(format!("invalid {}: {error}", source_path.display()))
         })?;
+        if let Some((_, speed)) = self.animation_settings(&pages)? {
+            self.speed_seconds = speed;
+        }
         let state = load_state(&self.paths)
             .map_err(|error| DisplayError::Source(format!("cannot load state: {error}")))?;
         let settings = load_settings(&self.paths)
@@ -187,7 +254,7 @@ impl FrameSource for RevisionFrameSource {
             .map_err(|error| DisplayError::Source(format!("cannot open media store: {error}")))?;
         let elapsed = self.started.elapsed().as_secs_f64();
         let phase = if animation {
-            (elapsed * 100.0 / 4.0) % 100.0
+            (elapsed * 100.0 / self.speed_seconds) % 100.0
         } else {
             0.0
         };
@@ -273,6 +340,53 @@ mod tests {
         fs::write(root.join("state.json"), br#"{"pve":{"cpu_pct":90}}"#).unwrap();
         let second = source.frame(&revision, false).unwrap();
         assert_ne!(first.as_raw(), second.as_raw());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn orbit_frames_advance_by_layer_speed_while_static_frames_do_not() {
+        let (paths, root) = fixture("animation");
+        let animation = json!({
+            "schema_version": 1, "revision": 1, "carousel": ["home"],
+            "pages": {"home": {
+                "id": "home", "name": "Home", "enabled": true, "duration": 8,
+                "revision": 1, "background": {"color": "#071019"}, "layers": [{
+                    "id": "orbit", "type": "animation", "x": 400, "y": 100,
+                    "width": 100, "height": 100, "z": 1, "speed_seconds": 2
+                }]
+            }}
+        });
+        fs::write(
+            root.join("compiled/r1/source-pages.json"),
+            serde_json::to_vec(&animation).unwrap(),
+        )
+        .unwrap();
+        let mut source = RevisionFrameSource::new(paths.clone());
+        let revision = PromotedRevision::new("r1");
+        assert_eq!(source.animation_fps(&revision).unwrap(), Some(5));
+        let first = source.frame(&revision, true).unwrap();
+        source.started -= Duration::from_secs(1);
+        let second = source.frame(&revision, true).unwrap();
+        assert_ne!(first.as_raw(), second.as_raw());
+
+        fs::write(
+            root.join("compiled/r1/source-pages.json"),
+            serde_json::to_vec(&json!({
+                "schema_version": 1, "revision": 1, "carousel": ["home"],
+                "pages": {"home": {"id":"home","name":"Home","enabled":true,"duration":8,"revision":1,"layers":[]}}
+            })).unwrap(),
+        ).unwrap();
+        assert_eq!(source.animation_fps(&revision).unwrap(), None);
+        let static_first = source.frame(&revision, false).unwrap();
+        source.started -= Duration::from_secs(1);
+        assert_eq!(
+            static_first.as_raw(),
+            source.frame(&revision, false).unwrap().as_raw()
+        );
+        assert_eq!(
+            DisplayScheduler::default().refresh_interval(false),
+            Duration::from_secs(1)
+        );
         let _ = fs::remove_dir_all(root);
     }
 

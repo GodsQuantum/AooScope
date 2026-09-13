@@ -41,6 +41,10 @@ pub fn app(state: AppState) -> Router {
             get(routes::designer::get_media).post(routes::designer::upload_media),
         )
         .route(
+            "/api/media/presets/orbit",
+            post(routes::designer::create_orbit_preset),
+        )
+        .route(
             "/api/media/{id}",
             delete(routes::designer::delete_media).put(routes::designer::replace_media),
         )
