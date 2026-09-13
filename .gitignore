@@ -25,3 +25,5 @@ frontend/.svelte-kit/
 frontend/build/
 
 /dist/
+
+Sources/
