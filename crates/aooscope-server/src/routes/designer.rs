@@ -43,7 +43,7 @@ fn media_error(value: MediaError) -> RouteError {
     }
 }
 
-fn factory_page(template: &str, id: &str) -> Option<Page> {
+pub(crate) fn factory_page(template: &str, id: &str) -> Option<Page> {
     let (name, enabled, layers) = match template {
         "factory.splash.v1" => (
             "Splash",
