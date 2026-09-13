@@ -74,10 +74,11 @@ fn orbit_preset_reuses_source_bytes_and_does_not_replace_custom_splash_animation
             image::ImageFormat::Png,
         )
         .unwrap();
-    let source = store.ingest(&bytes, "Cloud 9").unwrap();
+    let source = store.ingest(&bytes, "logo.png").unwrap();
     let before = std::fs::read(root.join("media").join(&source.stored_name)).unwrap();
-    let preset = store.ensure_cloud9_orbit().unwrap();
-    assert_eq!(preset.name, "Cloud 9 · Orbit");
+    let preset = store.ensure_orbit(&source.id, None).unwrap();
+    assert_eq!(preset.id, "orbit");
+    assert_eq!(preset.name, "Orbit");
     assert_eq!(preset.source_asset_id, source.id);
     assert_eq!(preset.settings["fps"], 5);
     assert_eq!(preset.settings["speed_seconds"], 4);
@@ -101,7 +102,7 @@ fn orbit_preset_reuses_source_bytes_and_does_not_replace_custom_splash_animation
             "layers":[{"id":"logo","type":"image","asset_id":source.id,"x":0,"y":0,"width":2,"height":2,"z":1}]
         })).unwrap(),
     );
-    let existing = store.ensure_cloud9_orbit().unwrap();
+    let existing = store.ensure_orbit(&source.id, None).unwrap();
     assert_eq!(existing, preset);
     assert!(MediaStore::migrate_splash(&mut legacy_pages, &existing));
     assert_eq!(
@@ -149,7 +150,7 @@ fn orbit_preset_reuses_source_bytes_and_does_not_replace_custom_splash_animation
 }
 
 #[test]
-fn orbit_source_matching_is_case_insensitive_without_matching_similar_names() {
+fn orbit_preset_requires_explicit_source_and_updates_stably() {
     let root = temp_root("orbit-source-matching");
     let store = MediaStore::new(&root).unwrap();
     let image = image::RgbImage::from_pixel(1, 1, image::Rgb([9, 8, 7]));
@@ -160,13 +161,26 @@ fn orbit_source_matching_is_case_insensitive_without_matching_similar_names() {
             image::ImageFormat::Png,
         )
         .unwrap();
-    let unrelated = store.ingest(&bytes, "cloud 90.png").unwrap();
-    let source = store.ingest(&bytes, "cloud 9.png").unwrap();
+    let source = store.ingest(&bytes, "source.png").unwrap();
 
-    let preset = store.ensure_cloud9_orbit().unwrap();
+    let preset = store
+        .ensure_orbit(&source.id, Some("Custom Orbit"))
+        .unwrap();
 
     assert_eq!(preset.source_asset_id, source.id);
-    assert_ne!(preset.source_asset_id, unrelated.id);
+    assert_eq!(preset.name, "Custom Orbit");
+    assert_eq!(store.presets().unwrap().len(), 1);
+    let replacement = store.ingest(&bytes, "replacement.png").unwrap();
+    let updated = store.ensure_orbit(&replacement.id, None).unwrap();
+    assert_eq!(updated.id, preset.id);
+    assert_eq!(updated.name, "Orbit");
+    assert_eq!(updated.source_asset_id, replacement.id);
+}
+
+#[test]
+fn orbit_preset_rejects_unknown_source() {
+    let store = MediaStore::new(temp_root("orbit-missing")).unwrap();
+    assert!(store.ensure_orbit("missing", None).is_err());
 }
 
 fn temp_root(name: &str) -> PathBuf {

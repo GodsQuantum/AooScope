@@ -237,6 +237,43 @@ async fn invalid_page_update_is_rejected_without_changing_pages_json() {
     assert_eq!(before, fs::read(temp.join("pages.json")).unwrap());
 }
 
+#[tokio::test]
+async fn orbit_preset_accepts_explicit_source_and_updates_the_same_preset() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/appdata-v1");
+    let temp = std::env::temp_dir().join(format!("aooscope-orbit-api-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp);
+    fs::create_dir_all(&temp).unwrap();
+    for name in ["pages.json", "media.json", "state.json", "settings.json"] {
+        fs::copy(source.join(name), temp.join(name)).unwrap();
+    }
+    let router = app(AppState::new(AppPaths::new(&temp)));
+    let response = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/media/presets/orbit",
+            json!({"source_asset_id":"fixture-image","display_name":"Logo Orbit"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let preset = body(response).await;
+    assert_eq!(preset["id"], "orbit");
+    assert_eq!(preset["name"], "Logo Orbit");
+    assert_eq!(preset["settings"]["fps"], 5);
+    assert_eq!(preset["settings"]["speed_seconds"], 4);
+
+    let response = router
+        .oneshot(request(
+            "POST",
+            "/api/media/presets/orbit",
+            json!({"source_asset_id":"fixture-image"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(body(response).await["name"], "Orbit");
+}
+
 fn request(method: &str, uri: &str, value: Value) -> Request<Body> {
     let mut builder = Request::builder().method(method).uri(uri);
     if !value.is_null() {
