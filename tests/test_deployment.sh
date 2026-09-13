@@ -8,9 +8,11 @@ contains() { grep -Fq -- "$1" "$2"; }
 not_contains() { ! grep -Fq -- "$1" "$2"; }
 check canonical_dockerfile_contains 'grep -Fq "FROM rust:1.98.1-trixie AS rust-base" Dockerfile'
 check canonical_dockerfile_contains 'grep -Fq "FROM node:24.21.0-bookworm-slim AS frontend-check" Dockerfile'
+check rust_build_packages_are_present 'awk "/^FROM rust:/{rust=1} /^FROM debian:/{rust=0} rust" Dockerfile | grep -Eq "pkg-config[[:space:]]+libudev-dev"'
 check canonical_dockerfile_embeds_frontend 'grep -Fq "COPY --from=frontend-check /src/frontend/build ./frontend/build" Dockerfile'
 check canonical_dockerfile_copies_one_binary 'grep -Fq "COPY --from=rust-builder /out/aooscope /usr/local/bin/aooscope" Dockerfile'
-check runtime_packages_are_minimal 'grep -Eq "ca-certificates[[:space:]]+tini[[:space:]]+tzdata" Dockerfile'
+check runtime_packages_are_minimal 'grep -Eq "ca-certificates[[:space:]]+libudev1[[:space:]]+tini[[:space:]]+tzdata" Dockerfile'
+check runtime_includes_libudev 'awk "/^FROM debian/{runtime=1} runtime" Dockerfile | grep -Eq "libudev1"'
 check no_python_or_node_runtime '! awk "/^FROM debian/{runtime=1} runtime" Dockerfile | grep -Eiq "python|node"'
 check no_waitress_or_asterctl_runtime '! grep -Fq waitress Dockerfile && ! grep -Fq asterctl Dockerfile'
 check compose_is_pull_only 'not_contains "    build:" compose.yaml'
