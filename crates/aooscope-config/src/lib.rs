@@ -6,7 +6,7 @@ use std::io;
 use std::path::PathBuf;
 use thiserror::Error;
 
-pub use atomic::atomic_write_json;
+pub use atomic::{atomic_write_json, atomic_write_private_json};
 pub use load::{load_media, load_pages, load_provider_secrets, load_settings, load_state};
 pub use paths::AppPaths;
 

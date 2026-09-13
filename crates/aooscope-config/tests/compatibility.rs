@@ -1,10 +1,12 @@
 use aooscope_config::{
-    AppPaths, atomic_write_json, load_media, load_pages, load_provider_secrets, load_settings,
-    load_state,
+    AppPaths, atomic_write_json, atomic_write_private_json, load_media, load_pages,
+    load_provider_secrets, load_settings, load_state,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -91,5 +93,22 @@ fn atomic_write_replaces_json_without_temp_residue() {
         .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
         .collect();
     assert!(residue.is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn private_atomic_rewrite_stays_mode_0600() {
+    let root = std::env::temp_dir().join(format!("aooscope-private-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let target = root.join("providers.json");
+
+    atomic_write_private_json(&target, &serde_json::json!({"token": "secret"})).unwrap();
+    atomic_write_private_json(&target, &serde_json::json!({"token": "changed"})).unwrap();
+
+    assert_eq!(
+        fs::metadata(target).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
     fs::remove_dir_all(root).unwrap();
 }
