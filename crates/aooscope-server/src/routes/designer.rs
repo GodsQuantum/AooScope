@@ -464,6 +464,7 @@ pub async fn apply(State(state): State<crate::state::AppState>) -> Result<Json<V
     store
         .promote(&revision_id)
         .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "apply failed"))?;
+    state.promote_display(revision_id.clone());
     let warnings = compiled
         .pages
         .iter()
