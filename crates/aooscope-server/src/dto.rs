@@ -4,6 +4,37 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
+pub struct DisplayCapabilitiesDto {
+    pub width: u32,
+    pub height: u32,
+    pub native_brightness: bool,
+    pub power_control: bool,
+    pub power_on: bool,
+}
+
+impl From<aooscope_display::DisplayCapabilities> for DisplayCapabilitiesDto {
+    fn from(value: aooscope_display::DisplayCapabilities) -> Self {
+        Self {
+            width: value.width,
+            height: value.height,
+            native_brightness: value.native_brightness,
+            power_control: value.power_control,
+            power_on: false,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DisplayPowerRequest {
+    pub on: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DisplayPowerDto {
+    pub on: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct HealthDto {
     pub ok: bool,

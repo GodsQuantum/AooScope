@@ -17,6 +17,15 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(routes::health::get_health))
         .route("/api/status", get(routes::status::get_status))
+        .route(
+            "/api/display/capabilities",
+            get(routes::display::get_capabilities),
+        )
+        .route("/api/display/power", post(routes::display::set_power))
+        .route(
+            "/api/display/luminance",
+            post(routes::display::set_luminance),
+        )
         .route("/api/settings", get(routes::settings::get_settings))
         .route(
             "/api/pages",

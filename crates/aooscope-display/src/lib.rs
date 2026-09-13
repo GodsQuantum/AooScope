@@ -4,6 +4,10 @@ mod aoostar;
 mod simulated;
 
 use image::RgbImage;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -68,6 +72,7 @@ pub trait DisplayDriver: Send {
 #[derive(Clone)]
 pub struct DisplayWorker {
     tx: tokio::sync::mpsc::Sender<Command>,
+    power_on: Arc<AtomicBool>,
 }
 
 enum Command {
@@ -80,20 +85,33 @@ impl DisplayWorker {
     pub fn disabled() -> Self {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
-        Self { tx }
+        Self {
+            tx,
+            power_on: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     pub fn spawn<D: DisplayDriver + 'static>(driver: D, capacity: usize) -> Self {
         let (tx, mut rx) = mpsc::channel(capacity.max(1));
+        let power_on = Arc::new(AtomicBool::new(false));
+        let state = power_on.clone();
         tokio::task::spawn_blocking(move || {
             let mut driver = driver;
             while let Some(command) = rx.blocking_recv() {
                 match command {
                     Command::PowerOn(reply) => {
-                        let _ = reply.send(driver.power_on());
+                        let result = driver.power_on();
+                        if result.is_ok() {
+                            state.store(true, Ordering::Release);
+                        }
+                        let _ = reply.send(result);
                     }
                     Command::PowerOff(reply) => {
-                        let _ = reply.send(driver.power_off());
+                        let result = driver.power_off();
+                        if result.is_ok() {
+                            state.store(false, Ordering::Release);
+                        }
+                        let _ = reply.send(result);
                     }
                     Command::Frame(frame, reply) => {
                         let _ = reply.send(driver.send_frame(&frame));
@@ -101,7 +119,11 @@ impl DisplayWorker {
                 }
             }
         });
-        Self { tx }
+        Self { tx, power_on }
+    }
+
+    pub fn power_state(&self) -> bool {
+        self.power_on.load(Ordering::Acquire)
     }
 
     pub async fn power_on(&self) -> Result<(), DisplayError> {

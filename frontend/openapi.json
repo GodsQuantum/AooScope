@@ -10,6 +10,86 @@
     "version": "0.3.0-dev"
   },
   "paths": {
+    "/api/display/capabilities": {
+      "get": {
+        "tags": [
+          "routes::display"
+        ],
+        "operationId": "get_capabilities",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayCapabilitiesDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/display/luminance": {
+      "post": {
+        "tags": [
+          "routes::display"
+        ],
+        "operationId": "set_luminance",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisplayLuminanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/display/power": {
+      "post": {
+        "tags": [
+          "routes::display"
+        ],
+        "operationId": "set_power",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisplayPowerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayPowerDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "tags": [
@@ -30,6 +110,26 @@
         }
       }
     },
+    "/api/metrics": {
+      "get": {
+        "tags": [
+          "routes::catalog"
+        ],
+        "operationId": "get_metrics",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricCatalogDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/pages": {
       "get": {
         "tags": [
@@ -43,6 +143,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PagesListDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/providers/catalog": {
+      "get": {
+        "tags": [
+          "routes::catalog"
+        ],
+        "operationId": "get_provider_catalog",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCatalogDto"
                 }
               }
             }
@@ -93,6 +213,72 @@
   },
   "components": {
     "schemas": {
+      "DisplayCapabilitiesDto": {
+        "type": "object",
+        "required": [
+          "width",
+          "height",
+          "native_brightness",
+          "power_control",
+          "power_on"
+        ],
+        "properties": {
+          "height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "native_brightness": {
+            "type": "boolean"
+          },
+          "power_control": {
+            "type": "boolean"
+          },
+          "power_on": {
+            "type": "boolean"
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "DisplayLuminanceRequest": {
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "DisplayPowerDto": {
+        "type": "object",
+        "required": [
+          "on"
+        ],
+        "properties": {
+          "on": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DisplayPowerRequest": {
+        "type": "object",
+        "required": [
+          "on"
+        ],
+        "properties": {
+          "on": {
+            "type": "boolean"
+          }
+        }
+      },
       "DisplaySettings": {
         "type": "object",
         "properties": {
@@ -135,6 +321,82 @@
             "type": "boolean"
           },
           "version": {
+            "type": "string"
+          }
+        }
+      },
+      "MetricCatalogDto": {
+        "type": "object",
+        "required": [
+          "metrics"
+        ],
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetricDescriptor"
+            }
+          }
+        }
+      },
+      "MetricDescriptor": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "provider_id",
+          "provider_name",
+          "category",
+          "value_type",
+          "unit",
+          "online",
+          "recommended_widgets"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "demo_value": {},
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "provider_name": {
+            "type": "string"
+          },
+          "recommended_widgets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WidgetKind"
+            }
+          },
+          "unit": {
+            "type": "string"
+          },
+          "value": {},
+          "value_type": {
             "type": "string"
           }
         }
@@ -206,6 +468,53 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "ProviderCatalogDto": {
+        "type": "object",
+        "required": [
+          "providers"
+        ],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderDescriptor"
+            }
+          }
+        }
+      },
+      "ProviderDescriptor": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "icon",
+          "categories",
+          "credential_fields"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "credential_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "icon": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -320,6 +629,20 @@
             "type": "string"
           }
         }
+      },
+      "WidgetKind": {
+        "type": "string",
+        "enum": [
+          "text",
+          "value",
+          "bar",
+          "gauge",
+          "ring",
+          "badge",
+          "sparkline",
+          "image",
+          "animation"
+        ]
       }
     }
   },

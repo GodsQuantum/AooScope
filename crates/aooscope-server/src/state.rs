@@ -1,12 +1,14 @@
 use crate::{APP_VERSION, dto::StatusDto};
 use aooscope_config::{AppPaths, ConfigError, atomic_write_json, load_settings, load_state};
 use aooscope_display::{
-    DisplayDriver, DisplayError, DisplayScheduler, DisplayWorker, FrameSource, PromotedRevision,
+    DisplayCapabilities, DisplayDriver, DisplayError, DisplayScheduler, DisplayWorker, FrameSource,
+    PromotedRevision,
 };
 use aooscope_render::{MediaStore, RevisionStore, compile_document};
 use aooscope_types::{MediaDisplayEvent, PagesDocument};
 use image::RgbImage;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
@@ -18,6 +20,8 @@ pub struct AppState {
     media_tx: watch::Sender<MediaDisplayEvent>,
     promoted_tx: watch::Sender<Option<PromotedRevision>>,
     pub display: DisplayWorker,
+    pub display_capabilities: DisplayCapabilities,
+    pub(crate) settings_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
@@ -37,10 +41,16 @@ impl AppState {
             media_tx,
             promoted_tx,
             display: DisplayWorker::disabled(),
+            display_capabilities: DisplayCapabilities {
+                power_control: false,
+                ..DisplayCapabilities::default()
+            },
+            settings_lock: Arc::new(Mutex::new(())),
         }
     }
 
     pub fn with_display_driver<D: DisplayDriver + 'static>(mut self, driver: D) -> Self {
+        self.display_capabilities = driver.capabilities();
         self.display = DisplayWorker::spawn(driver, 8);
         self
     }
