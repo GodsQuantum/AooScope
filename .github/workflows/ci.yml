@@ -19,6 +19,8 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
+      - name: Install reference system dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg librsvg2-bin
       - name: Install reference dependencies
         run: python -m pip install --disable-pip-version-check flask pillow waitress
       - name: Reference tests
