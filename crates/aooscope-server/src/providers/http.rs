@@ -44,6 +44,20 @@ impl HttpClient {
         json_response(response).await
     }
 
+    pub async fn post_json(
+        &self,
+        base: &str,
+        path: &str,
+        body: &Value,
+        headers: &[(&str, &str)],
+    ) -> Result<Value, HttpError> {
+        let response = self
+            .request(self.client.post(url(base, path)).json(body), headers)
+            .send()
+            .await?;
+        json_response(response).await
+    }
+
     pub async fn post_form(
         &self,
         base: &str,

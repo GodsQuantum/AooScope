@@ -4,5 +4,6 @@ pub mod display;
 pub mod events;
 pub mod health;
 pub mod pages;
+pub mod providers;
 pub mod settings;
 pub mod status;

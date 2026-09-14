@@ -1,7 +1,7 @@
 use crate::{
     dto::{
         DisplayCapabilitiesDto, DisplayPowerDto, DisplayPowerRequest, HealthDto, PageSummaryDto,
-        PagesListDto, PublicProviderDto, PublicSettingsDto, StatusDto,
+        PagesListDto, ProviderStatusDto, PublicProviderDto, PublicSettingsDto, StatusDto,
     },
     routes,
 };
@@ -22,12 +22,15 @@ use utoipa::OpenApi;
         routes::catalog::get_provider_catalog,
         routes::display::get_capabilities,
         routes::display::set_power,
-        routes::display::set_luminance
+        routes::display::set_luminance,
+        routes::settings::put_settings,
+        routes::providers::get_status,
+        routes::providers::test_provider
     ),
     components(schemas(
         HealthDto, StatusDto, PublicSettingsDto, PublicProviderDto,
         PagesListDto, PageSummaryDto, DisplaySettings, ScheduleRule,
-        DisplayCapabilitiesDto, DisplayPowerRequest, DisplayPowerDto,
+        DisplayCapabilitiesDto, DisplayPowerRequest, DisplayPowerDto, ProviderStatusDto,
         routes::display::DisplayLuminanceRequest,
         MetricCatalogDto, MetricDescriptor, ProviderCatalogDto, ProviderDescriptor, WidgetKind
     )),

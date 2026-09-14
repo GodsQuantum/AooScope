@@ -2,7 +2,8 @@ use super::http::{HttpClient, HttpError, bounded_body, cookie_from_response};
 use aooscope_types::{
     MediaDisplayEvent, MediaMode, ProviderSecrets, ProviderSettings, Settings, provider_name,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 const ACTIVE_QBIT_STATES: &[&str] = &[
     "downloading",
@@ -520,28 +521,51 @@ async fn login_qbit(
     Ok(cookie)
 }
 
-fn collection_result(
-    provider: &str,
-    result: Result<MediaDisplayEvent, CollectorError>,
-) -> Option<MediaDisplayEvent> {
-    match result {
-        Ok(state) => Some(state),
-        Err(CollectorError::NotConfigured) => None,
-        Err(_) => Some(offline(provider)),
-    }
+fn provider_status(configured: bool, enabled: bool, online: bool, error: Option<String>) -> Value {
+    let last_success = online.then(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_secs() as i64)
+            .unwrap_or_default()
+    });
+    json!({
+        "configured": configured,
+        "enabled": enabled,
+        "online": online,
+        "last_success": last_success,
+        "error": error
+    })
 }
 
-pub async fn collect_media_state(
+pub async fn collect_media_state_with_status(
     settings: &Settings,
     secrets: &ProviderSecrets,
-) -> MediaDisplayEvent {
+) -> (MediaDisplayEvent, BTreeMap<String, Value>) {
     let mut states = Vec::new();
+    let mut statuses = BTreeMap::new();
     for provider in ["jellyfin", "silo", "radarr", "sonarr", "qbittorrent"] {
-        if let Some(state) = collection_result(
-            provider,
-            collect_provider(provider, settings, secrets).await,
-        ) {
-            states.push(state);
+        let config = settings.providers.get(provider);
+        let configured = config.is_some_and(|value| !value.url.trim().is_empty());
+        let enabled = config.is_some_and(|value| value.enabled);
+        if !configured || !enabled {
+            statuses.insert(
+                provider.to_owned(),
+                provider_status(configured, enabled, false, None),
+            );
+            continue;
+        }
+        match collect_provider(provider, settings, secrets).await {
+            Ok(state) => {
+                statuses.insert(provider.to_owned(), provider_status(true, true, true, None));
+                states.push(state);
+            }
+            Err(error) => {
+                statuses.insert(
+                    provider.to_owned(),
+                    provider_status(true, true, false, Some(error.to_string())),
+                );
+                states.push(offline(provider));
+            }
         }
     }
     let qbit = states
@@ -558,13 +582,19 @@ pub async fn collect_media_state(
         states[index] = merged;
         states.retain(|state| state.source.as_deref() != Some("qbittorrent"));
     }
-    select_display_event(&states)
+    (select_display_event(&states), statuses)
+}
+
+pub async fn collect_media_state(
+    settings: &Settings,
+    secrets: &ProviderSecrets,
+) -> MediaDisplayEvent {
+    collect_media_state_with_status(settings, secrets).await.0
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CollectorError, arr_queue_path, collection_result, duration_minutes};
-    use aooscope_types::MediaMode;
+    use super::{arr_queue_path, duration_minutes};
 
     #[test]
     fn duration_parser_handles_days_and_rounding() {
@@ -574,17 +604,23 @@ mod tests {
     }
 
     #[test]
-    fn provider_failure_becomes_offline_but_unconfigured_is_ignored() {
-        let failed = collection_result("jellyfin", Err(CollectorError::Authentication)).unwrap();
-        assert_eq!(failed.mode, MediaMode::Offline);
-        assert_eq!(failed.source.as_deref(), Some("jellyfin"));
-        assert!(collection_result("jellyfin", Err(CollectorError::NotConfigured)).is_none());
-    }
-
-    #[test]
     fn arr_queue_paths_request_display_metadata() {
         assert!(arr_queue_path("radarr").contains("includeMovie=true"));
         assert!(arr_queue_path("sonarr").contains("includeSeries=true"));
         assert!(arr_queue_path("sonarr").contains("includeEpisode=true"));
+    }
+
+    #[tokio::test]
+    async fn disabled_media_provider_is_configured_but_not_polled() {
+        let settings: aooscope_types::Settings = serde_json::from_value(serde_json::json!({
+            "providers": {"jellyfin": {"enabled": false, "url": "http://jellyfin.test"}}
+        }))
+        .unwrap();
+        let (_, statuses) =
+            super::collect_media_state_with_status(&settings, &Default::default()).await;
+        let status = &statuses["jellyfin"];
+        assert_eq!(status["configured"], true);
+        assert_eq!(status["enabled"], false);
+        assert_eq!(status["online"], false);
     }
 }

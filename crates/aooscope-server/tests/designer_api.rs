@@ -1,6 +1,7 @@
 use aooscope_config::AppPaths;
 use aooscope_render::MediaStore;
-use aooscope_server::{AppState, app};
+use aooscope_server::{AppState, app, bootstrap};
+use aooscope_types::PagesDocument;
 use axum::{body::Body, http::Request};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
@@ -272,6 +273,66 @@ async fn orbit_preset_accepts_explicit_source_and_updates_the_same_preset() {
         .await
         .unwrap();
     assert_eq!(body(response).await["name"], "Orbit");
+}
+
+#[tokio::test]
+async fn orbit_preset_updates_only_the_bootstrapped_factory_splash() {
+    let temp =
+        std::env::temp_dir().join(format!("aooscope-orbit-bootstrap-{}", uuid::Uuid::new_v4()));
+    let paths = AppPaths::new(&temp);
+    bootstrap(&paths).unwrap();
+
+    let png = image::RgbImage::from_pixel(2, 2, image::Rgb([9, 8, 7]));
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(png)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    let asset = MediaStore::new(&temp)
+        .unwrap()
+        .ingest(&bytes, "orbit.png")
+        .unwrap();
+
+    let mut pages: PagesDocument =
+        serde_json::from_slice(&fs::read(paths.pages()).unwrap()).unwrap();
+    pages.pages.insert(
+        "custom-splash".into(),
+        serde_json::from_value(json!({
+            "id":"custom-splash", "name":"Splash", "duration":8, "revision":7,
+            "layers":[{"id":"custom-logo","type":"image","asset_id":asset.id,"x":0,"y":0,"width":2,"height":2,"z":1}]
+        }))
+        .unwrap(),
+    );
+    fs::write(paths.pages(), serde_json::to_vec_pretty(&pages).unwrap()).unwrap();
+    let custom_before = serde_json::to_vec(&pages.pages["custom-splash"]).unwrap();
+
+    let response = app(AppState::new(paths.clone()))
+        .oneshot(request(
+            "POST",
+            "/api/media/presets/orbit",
+            json!({"source_asset_id":asset.id}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let pages: PagesDocument = serde_json::from_slice(&fs::read(paths.pages()).unwrap()).unwrap();
+    let splash = &pages.pages["page-splash"];
+    assert_eq!(splash.template_id.as_deref(), Some("factory.splash.v1"));
+    let orbit = splash
+        .layers
+        .iter()
+        .find(|layer| layer.layer_type == "animation")
+        .unwrap();
+    assert_eq!(orbit.extra["asset_id"], asset.id);
+    assert_eq!(orbit.extra["preset_id"], "orbit");
+    assert_eq!(
+        serde_json::to_vec(&pages.pages["custom-splash"]).unwrap(),
+        custom_before
+    );
+    let _ = fs::remove_dir_all(temp);
 }
 
 fn request(method: &str, uri: &str, value: Value) -> Request<Body> {
