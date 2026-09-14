@@ -87,6 +87,53 @@ fn vertical_bar_fills_from_the_bottom() {
 }
 
 #[test]
+fn gauges_and_bars_use_rounded_geometry() {
+    let root = temp_root("rounded-primitives");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"geometry", "name":"Geometry", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#071019"},
+        "layers":[
+            {"id":"gauge","type":"gauge","binding":"aooscope_pve_cpu_pct","x":40,"y":40,"width":180,"height":180,"z":1,"color":"#35d9ff","thickness":18},
+            {"id":"bar","type":"bar","binding":"aooscope_pve_cpu_pct","x":300,"y":80,"width":240,"height":24,"z":1,"color":"#35d9ff"}
+        ]
+    }))
+    .unwrap();
+    let state = StateDocument {
+        pve: Some(json!({"cpu_pct": 50})),
+        ..Default::default()
+    };
+    let image = compile_page(&page, &state, &media, 100, 0.0).unwrap().image;
+    assert_eq!(image.get_pixel(40, 40).0, [7, 16, 25]);
+    assert_eq!(image.get_pixel(300, 80).0, [7, 16, 25]);
+    assert_eq!(image.get_pixel(130, 40).0, [53, 217, 255]);
+}
+
+#[test]
+fn nested_state_bindings_and_text_units_are_rendered() {
+    let root = temp_root("nested-bindings");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"nested", "name":"Nested", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#071019"},
+        "layers":[
+            {"id":"disk","type":"value","binding":"aooscope_pve_smart_0_temperature_c","x":20,"y":20,"width":180,"height":32,"z":1,"color":"#ffffff","unit":" C","scale":2},
+            {"id":"media","type":"text","binding":"aooscope_media_display_title_short","x":20,"y":80,"width":300,"height":32,"z":1,"color":"#ffffff","scale":2}
+        ]
+    }))
+    .unwrap();
+    let state = StateDocument {
+        pve: Some(json!({"smart":[{"temperature_c": 41}]})),
+        media: Some(json!({"display":{"title_short":"ORBIT"}})),
+        ..Default::default()
+    };
+    let populated = compile_page(&page, &state, &media, 100, 0.0).unwrap();
+    let empty = compile_page(&page, &StateDocument::default(), &media, 100, 0.0).unwrap();
+    assert_ne!(populated.image.as_raw(), empty.image.as_raw());
+    assert!(populated.warnings.is_empty());
+}
+
+#[test]
 fn factory_semantics_cover_home_storage_compute_media_and_splash() {
     let root = temp_root("goldens");
     let media = aooscope_render::MediaStore::new(&root).unwrap();
@@ -102,6 +149,21 @@ fn factory_semantics_cover_home_storage_compute_media_and_splash() {
         assert_eq!(frame.image.get_pixel(0, 0).0, [7, 16, 25]);
         assert!(frame.image.pixels().any(|pixel| pixel.0 != [7, 16, 25]));
     }
+}
+
+#[test]
+fn full_ring_endpoint_is_filled_without_track_seam() {
+    let root = temp_root("full-ring");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"ring100", "name":"Ring 100", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#071019"},
+        "layers":[{"id":"ring","type":"ring","x":40,"y":40,"width":180,"height":180,"z":1,"color":"#35d9ff","track_color":"#1d2632","thickness":18,"value":100}]
+    })).unwrap();
+    let image = compile_page(&page, &StateDocument::default(), &media, 100, 0.0)
+        .unwrap()
+        .image;
+    assert_eq!(image.get_pixel(130, 49).0, [53, 217, 255]);
 }
 
 fn temp_root(name: &str) -> PathBuf {

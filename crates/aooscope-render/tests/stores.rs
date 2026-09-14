@@ -63,7 +63,7 @@ fn gif_ingest_is_supported_by_the_enabled_decoder() {
 }
 
 #[test]
-fn orbit_preset_reuses_source_bytes_and_does_not_replace_custom_splash_animation() {
+fn orbit_preset_reuses_source_bytes_and_leaves_custom_splash_untouched() {
     let root = temp_root("orbit");
     let store = MediaStore::new(&root).unwrap();
     let image = image::RgbImage::from_pixel(2, 2, image::Rgb([9, 8, 7]));
@@ -88,14 +88,14 @@ fn orbit_preset_reuses_source_bytes_and_does_not_replace_custom_splash_animation
         std::fs::read(root.join("media").join(&source.stored_name)).unwrap()
     );
 
-    let mut legacy_pages = PagesDocument {
+    let mut custom_pages = PagesDocument {
         schema_version: 1,
         revision: 1,
         carousel: vec!["splash".into()],
         pages: Default::default(),
         extra: Default::default(),
     };
-    legacy_pages.pages.insert(
+    custom_pages.pages.insert(
         "splash".into(),
         serde_json::from_value(json!({
             "id":"splash", "name":"Splash", "duration":8, "revision":1,
@@ -104,10 +104,11 @@ fn orbit_preset_reuses_source_bytes_and_does_not_replace_custom_splash_animation
     );
     let existing = store.ensure_orbit(&source.id, None).unwrap();
     assert_eq!(existing, preset);
-    assert!(MediaStore::migrate_splash(&mut legacy_pages, &existing));
+    let before = serde_json::to_vec(&custom_pages.pages["splash"]).unwrap();
+    assert!(!MediaStore::migrate_splash(&mut custom_pages, &existing));
     assert_eq!(
-        legacy_pages.pages["splash"].layers[0].layer_type,
-        "animation"
+        serde_json::to_vec(&custom_pages.pages["splash"]).unwrap(),
+        before
     );
 
     let mut pages = PagesDocument {

@@ -1,26 +1,34 @@
 <script lang="ts">
   import { requestJson } from '$lib/api/client';
   type Capabilities = { width: number; height: number; native_brightness: boolean; power_control: boolean };
-  let { capabilities, powerOn, brightness, onpower, onbrightness }: { capabilities: Capabilities; powerOn: boolean; brightness: number; onpower?: (on: boolean) => void; onbrightness?: (value: number) => void } = $props();
-  let busy = $state(false); let error = $state('');
-  async function setPower(on: boolean) {
-    busy = true; error = '';
-    try { await requestJson<{ on: boolean }>('/api/display/power', 'POST', { on }); onpower?.(on); }
-    catch (cause) { error = String(cause); }
-    finally { busy = false; }
-  }
-  async function setLuminance(value: number) {
-    busy = true; error = '';
-    try { const status = await requestJson<{ brightness: number }>('/api/display/luminance', 'POST', { value }); onbrightness?.(status.brightness); }
-    catch (cause) { error = String(cause); }
-    finally { busy = false; }
-  }
+  type Rule = { start: string; end: string; brightness: number };
+  type Display = { brand: string; timezone: string; switch_seconds: number; schedule_enabled: boolean; schedule: Rule[]; brightness: number };
+  let { capabilities, powerOn, brightness, settings, settingsDocument, onpower, onbrightness, onsaved }: { capabilities: Capabilities; powerOn: boolean; brightness: number; settings?: Partial<Display>; settingsDocument?: Record<string, unknown>; onpower?: (on: boolean) => void; onbrightness?: (value: number) => void; onsaved?: (document: Record<string, unknown>) => void } = $props();
+  let busy = $state(false); let error = $state(''); let saved = $state('');
+  const defaults = (): Display => ({ brand: 'AOOSCOPE', timezone: 'UTC', switch_seconds: 8, schedule_enabled: false, schedule: [{ start: '22:00', end: '08:00', brightness: 70 }], brightness: 100 });
+  let form = $state<Display>(defaults()); let dirty = $state(false); let editGeneration = 0;
+  $effect(() => { if (!dirty) form = { ...defaults(), ...settings, brightness, schedule: settings?.schedule ?? defaults().schedule }; });
+  function markDirty() { dirty = true; editGeneration += 1; }
+  async function setPower(on: boolean) { busy = true; error = ''; try { await requestJson<{ on: boolean }>('/api/display/power', 'POST', { on }); onpower?.(on); } catch (cause) { error = String(cause); } finally { busy = false; } }
+  async function setLuminance(value: number) { busy = true; error = ''; try { const status = await requestJson<{ brightness: number }>('/api/display/luminance', 'POST', { value }); form.brightness = status.brightness; onbrightness?.(status.brightness); } catch (cause) { error = String(cause); } finally { busy = false; } }
+  async function save() { const generation = editGeneration; busy = true; error = ''; saved = ''; try { const document = await requestJson<Record<string, unknown>>('/api/settings', 'PUT', { ...(settingsDocument ?? {}), display: form }); saved = 'Display settings saved'; onsaved?.(document); if (generation === editGeneration) dirty = false; } catch (cause) { error = String(cause); } finally { busy = false; } }
+  function removeRule(index: number) { markDirty(); form.schedule = form.schedule.filter((_, item) => item !== index); }
 </script>
+
 <section class="display-controls" aria-label="Contrôles de l’écran">
-  <h2>Écran</h2>
-  <label for="software-luminance">Luminosité de l’image (logicielle)</label>
-  <input id="software-luminance" type="range" min="0" max="100" value={brightness} disabled={busy} oninput={(event) => setLuminance(Number(event.currentTarget.value))} />
-  {#if capabilities.power_control}<button disabled={busy} onclick={() => setPower(!powerOn)}>{powerOn ? 'Éteindre l’écran' : 'Allumer l’écran'}</button>{/if}
-  {#if error}<p role="alert">{error}</p>{/if}
+  <div class="heading"><div><span>Panel control</span><h2>Display</h2><p>{capabilities.width} × {capabilities.height} LCD workspace</p></div><div class:online={powerOn} class="power-state"><i></i>{powerOn ? 'Powered on' : 'Powered off'}</div></div>
+  <div class="grid">
+    <article class="card power"><h3>Safe power</h3><p>Hardware display power uses supported LCD controls only.</p>{#if capabilities.power_control}<button disabled={busy} onclick={() => setPower(!powerOn)}>{powerOn ? 'Éteindre l’écran' : 'Allumer l’écran'}</button>{:else}<strong>Power control unavailable</strong>{/if}</article>
+    <article class="card luminance"><div><h3>Software luminance</h3><strong>{form.brightness}%</strong></div><label for="software-luminance">Luminosité de l’image (logicielle)</label><input id="software-luminance" type="range" min="0" max="100" value={form.brightness} disabled={busy} oninput={(event) => setLuminance(Number(event.currentTarget.value))} /><p>{capabilities.native_brightness ? 'Native backlight control available.' : 'Native backlight control is unsupported; this adjusts rendered image luminance only.'}</p></article>
+  </div>
+  <article class="card settings"><h3>Carousel settings</h3><div class="form-grid"><label>Brand<input maxlength="32" bind:value={form.brand} oninput={markDirty} /></label><label>Timezone<input bind:value={form.timezone} placeholder="UTC" oninput={markDirty} /></label><label>Carousel interval (seconds)<input type="number" min="2" max="120" bind:value={form.switch_seconds} oninput={markDirty} /></label><label class="check"><input type="checkbox" bind:checked={form.schedule_enabled} onchange={markDirty} />Brightness schedule</label></div>
+    <div class="schedule-head"><h3>Schedule</h3><button onclick={() => { markDirty(); form.schedule = [...form.schedule, { start: '22:00', end: '08:00', brightness: 70 }]; }}>+ Schedule</button></div>
+    <div class="schedule">{#each form.schedule as rule, index}<div><label>Start<input type="time" bind:value={rule.start} oninput={markDirty} /></label><label>End<input type="time" bind:value={rule.end} oninput={markDirty} /></label><label>Luminance<input type="number" min="0" max="100" bind:value={rule.brightness} oninput={markDirty} /></label><button aria-label={`Delete schedule ${index + 1}`} onclick={() => removeRule(index)}>×</button></div>{/each}</div>
+    <div class="footer"><button class="primary" disabled={busy} onclick={save}>Save display settings</button><span>{saved}</span></div>
+  </article>
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
-<style>.display-controls{display:grid;gap:10px}.display-controls button{width:max-content;background:#102630;color:#eaf8ff;border:1px solid #315363;border-radius:7px;padding:8px 12px}.display-controls p{color:#b9d0d9}</style>
+
+<style>
+  .display-controls{display:grid;gap:16px}.heading{display:flex;justify-content:space-between;align-items:center;gap:20px}.heading span{color:#35d9ff;font-size:.68rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.heading h2{margin:4px 0}.heading p,.card p{margin:0;color:#91a8b8}.power-state{display:flex;align-items:center;gap:7px;padding:7px 11px;border:1px solid #5e3841;border-radius:999px;color:#ff8793;font-size:.72rem;font-weight:800}.power-state i{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 9px currentColor}.power-state.online{color:#58e5a4;border-color:#285d49}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{padding:17px;border:1px solid #263f52;border-radius:16px;background:linear-gradient(145deg,#0d1c29,#09151f);box-shadow:0 14px 34px #0003,inset 0 1px #ffffff09}.card h3{margin:0 0 7px}.power{display:grid;align-content:start;gap:12px}.power button{justify-self:start}.luminance>div{display:flex;justify-content:space-between}.luminance>div strong{color:#55dcf9;font-size:1.4rem}.luminance label{color:#c0d1db;font-size:.8rem}.luminance input{padding:0}.luminance p{font-size:.75rem}.settings{display:grid;gap:13px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.check{display:flex!important;align-items:center;gap:7px}.check input{width:auto}.schedule-head,.footer{display:flex;justify-content:space-between;align-items:center;gap:10px}.schedule{display:grid;gap:8px}.schedule>div{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end}.schedule>div button{height:38px}.primary{background:#087fa5;border-color:#35d9ff;padding:9px 13px}.footer span{color:#58e5a4;font-size:.75rem}.error{color:#ff8793}@media(max-width:700px){.heading{align-items:flex-start;flex-direction:column}.grid,.form-grid{grid-template-columns:1fr}.schedule>div{grid-template-columns:1fr 1fr}.schedule>div button{align-self:end}}
+</style>

@@ -26,7 +26,10 @@ pub fn app(state: AppState) -> Router {
             "/api/display/luminance",
             post(routes::display::set_luminance),
         )
-        .route("/api/settings", get(routes::settings::get_settings))
+        .route(
+            "/api/settings",
+            get(routes::settings::get_settings).put(routes::settings::put_settings),
+        )
         .route(
             "/api/pages",
             get(routes::pages::get_pages).post(routes::designer::create_page),
@@ -66,6 +69,11 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/providers/catalog",
             get(routes::catalog::get_provider_catalog),
+        )
+        .route("/api/providers/status", get(routes::providers::get_status))
+        .route(
+            "/api/providers/{id}/test",
+            post(routes::providers::test_provider),
         )
         .route("/api/events", get(routes::events::get_events))
         .route("/", get(assets::index))

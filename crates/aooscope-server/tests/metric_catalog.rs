@@ -75,3 +75,19 @@ async fn offline_media_metrics_keep_demo_values_and_provider_catalog_is_explicit
             .any(|p| p["id"] == "local" && p["name"] == "Hardware local")
     );
 }
+
+#[tokio::test]
+async fn storage_metric_keeps_legacy_plural_disk_name_binding() {
+    let (_, body) = get_json("/api/metrics").await;
+    let metrics = body["metrics"].as_array().unwrap();
+    assert!(
+        metrics
+            .iter()
+            .any(|m| m["id"] == "aooscope_pve_disks_0_name")
+    );
+    assert!(
+        !metrics
+            .iter()
+            .any(|m| m["id"] == "aooscope_pve_disk_0_name")
+    );
+}
