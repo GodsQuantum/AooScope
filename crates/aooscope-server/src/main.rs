@@ -52,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.display.power_on().await?;
     let display_runtime = state.start_display_runtime();
     let _media_poller = state.spawn_media_polling(std::time::Duration::from_secs(5));
+    let _telemetry_poller = state.spawn_telemetry_polling(std::time::Duration::from_secs(5));
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, "AooScope server listening");
     axum::serve(listener, app(state.clone()))

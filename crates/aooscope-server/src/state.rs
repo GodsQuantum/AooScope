@@ -104,6 +104,15 @@ impl AppState {
     }
 
     pub fn persist_media_snapshot(&self, event: &MediaDisplayEvent) -> Result<(), ConfigError> {
+        self.persist_media_snapshot_with_provider_statuses(event, &Default::default())
+    }
+
+    pub fn persist_media_snapshot_with_provider_statuses(
+        &self,
+        event: &MediaDisplayEvent,
+        statuses: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Result<(), ConfigError> {
+        let _guard = self.settings_lock.lock().expect("settings lock poisoned");
         let path = self.paths.state();
         let mut document = load_state(&self.paths)?;
         let event_value = serde_json::to_value(event).map_err(|source| ConfigError::Serialize {
@@ -120,6 +129,7 @@ impl AppState {
             .as_object_mut()
             .expect("media initialized as object")
             .insert("display".into(), event_value);
+        merge_provider_statuses(&mut document, statuses);
         atomic_write_json(&path, &document)
     }
 
@@ -137,13 +147,154 @@ impl AppState {
                     (Ok(settings), Ok(secrets)) => (settings, secrets),
                     _ => continue,
                 };
-                let event = crate::providers::media::collect_media_state(&settings, &secrets).await;
-                if let Err(error) = state.persist_media_snapshot(&event) {
+                let (event, statuses) =
+                    crate::providers::media::collect_media_state_with_status(&settings, &secrets)
+                        .await;
+                if let Err(error) =
+                    state.persist_media_snapshot_with_provider_statuses(&event, &statuses)
+                {
                     tracing::warn!(%error, "media state persistence failed");
                 }
                 state.publish_media(event);
             }
         })
+    }
+
+    pub fn spawn_telemetry_polling(&self, interval: Duration) -> tokio::task::JoinHandle<()> {
+        let state = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                let Ok(settings) = load_settings(&state.paths) else {
+                    continue;
+                };
+                let secrets =
+                    aooscope_config::load_provider_secrets(&state.paths).unwrap_or_default();
+                let telemetry =
+                    crate::providers::telemetry::collect_telemetry_state(&settings, &secrets).await;
+                if let Err(error) = state.persist_telemetry_snapshot(&telemetry) {
+                    tracing::warn!(%error, "telemetry state persistence failed");
+                }
+            }
+        })
+    }
+
+    pub fn persist_telemetry_snapshot(
+        &self,
+        telemetry: &aooscope_types::StateDocument,
+    ) -> Result<(), ConfigError> {
+        let path = self.paths.state();
+        let _guard = self.settings_lock.lock().expect("settings lock poisoned");
+        let mut document = load_state(&self.paths)?;
+        let providers = telemetry
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("providers"))
+            .and_then(serde_json::Value::as_object);
+        if telemetry.hardware.is_some() {
+            document.hardware = telemetry.hardware.clone();
+        }
+        if providers
+            .and_then(|items| items.get("proxmox"))
+            .is_some_and(|value| {
+                value.get("online").and_then(serde_json::Value::as_bool) == Some(false)
+                    || value.get("configured").and_then(serde_json::Value::as_bool) == Some(false)
+            })
+        {
+            document.pve = None;
+        } else if telemetry.pve.is_some() {
+            document.pve = telemetry.pve.clone();
+        }
+        if let Some(meta) = &telemetry.meta {
+            let current = document
+                .meta
+                .get_or_insert_with(|| serde_json::Value::Object(Default::default()));
+            if !current.is_object() {
+                *current = serde_json::Value::Object(Default::default());
+            }
+            if let (Some(target), Some(source)) = (current.as_object_mut(), meta.as_object()) {
+                if let Some(source_providers) = source
+                    .get("providers")
+                    .and_then(serde_json::Value::as_object)
+                {
+                    let target_providers = target
+                        .entry("providers")
+                        .or_insert_with(|| serde_json::json!({}));
+                    if let (Some(target_providers), Some(source_providers)) =
+                        (target_providers.as_object_mut(), Some(source_providers))
+                    {
+                        for (name, value) in source_providers {
+                            let mut value = value.clone();
+                            if value.get("online").and_then(serde_json::Value::as_bool)
+                                == Some(false)
+                                && let Some(last_success) = target_providers
+                                    .get(name)
+                                    .and_then(|old| old.get("last_success"))
+                            {
+                                value["last_success"] = last_success.clone();
+                            }
+                            target_providers.insert(name.clone(), value);
+                        }
+                    }
+                }
+                for (key, value) in source {
+                    if key != "providers" {
+                        target.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        for (key, value) in &telemetry.extra {
+            document.extra.insert(key.clone(), value.clone());
+        }
+        if let Some(providers) = providers {
+            for (name, value) in providers {
+                if value.get("online").and_then(serde_json::Value::as_bool) == Some(false)
+                    || value.get("configured").and_then(serde_json::Value::as_bool) == Some(false)
+                {
+                    document.extra.remove(name);
+                }
+            }
+        }
+        atomic_write_json(&path, &document)
+    }
+}
+
+fn merge_provider_statuses(
+    document: &mut aooscope_types::StateDocument,
+    statuses: &std::collections::BTreeMap<String, serde_json::Value>,
+) {
+    if statuses.is_empty() {
+        return;
+    }
+    let meta = document.meta.get_or_insert_with(|| serde_json::json!({}));
+    if !meta.is_object() {
+        *meta = serde_json::json!({});
+    }
+    let providers = meta
+        .as_object_mut()
+        .expect("meta initialized as object")
+        .entry("providers")
+        .or_insert_with(|| serde_json::json!({}));
+    if !providers.is_object() {
+        *providers = serde_json::json!({});
+    }
+    let providers = providers
+        .as_object_mut()
+        .expect("providers initialized as object");
+    for (name, incoming) in statuses {
+        let mut incoming = incoming.clone();
+        if incoming.get("online").and_then(serde_json::Value::as_bool) != Some(true)
+            && let Some(last_success) = providers
+                .get(name)
+                .and_then(|old| old.get("last_success"))
+                .filter(|value| !value.is_null())
+        {
+            incoming["last_success"] = last_success.clone();
+        }
+        providers.insert(name.clone(), incoming);
     }
 }
 
@@ -306,7 +457,8 @@ fn status_snapshot(paths: &AppPaths, device: &Path) -> StatusDto {
 mod tests {
     use super::*;
     use aooscope_display::FrameSource;
-    use serde_json::json;
+    use aooscope_types::StateDocument;
+    use serde_json::{Value, json};
     use std::fs;
 
     fn fixture(name: &str) -> (AppPaths, PathBuf) {
@@ -350,6 +502,87 @@ mod tests {
         fs::write(root.join("state.json"), br#"{"pve":{"cpu_pct":90}}"#).unwrap();
         let second = source.frame(&revision, false).unwrap();
         assert_ne!(first.as_raw(), second.as_raw());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_telemetry_clears_only_provider_metrics_and_preserves_last_success() {
+        let root = std::env::temp_dir().join(format!("aooscope-telemetry-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("state.json"),
+            br#"{"pve":{"cpu_pct":10},"beszel":{"systems":2},"unrelated":{"keep":true},"media":{"display":{"mode":"playing"}},"meta":{"providers":{"proxmox":{"last_success":123},"beszel":{"last_success":456}}}}"#,
+        )
+        .unwrap();
+        let state = AppState::new(AppPaths::new(&root));
+        state
+            .persist_telemetry_snapshot(&StateDocument {
+                meta: Some(json!({"providers": {
+                    "proxmox": {"online": false, "last_success": null},
+                    "beszel": {"online": false, "last_success": null}
+                }})),
+                ..StateDocument::default()
+            })
+            .unwrap();
+        let saved: Value =
+            serde_json::from_slice(&fs::read(root.join("state.json")).unwrap()).unwrap();
+        assert!(saved.get("pve").is_none());
+        assert!(saved.get("beszel").is_none());
+        assert_eq!(saved["unrelated"]["keep"], true);
+        assert_eq!(saved["media"]["display"]["mode"], "playing");
+        assert_eq!(saved["meta"]["providers"]["proxmox"]["last_success"], 123);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn disabled_telemetry_providers_clear_only_their_owned_state() {
+        let root =
+            std::env::temp_dir().join(format!("aooscope-telemetry-all-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("state.json"), br#"{"pve":{"cpu_pct":10},"beszel":{"systems":2},"immich":{"ping":"pong"},"ollama":{"models":3},"media":{"display":{"mode":"playing"}},"custom":{"keep":true}}"#).unwrap();
+        let state = AppState::new(AppPaths::new(&root));
+        state
+            .persist_telemetry_snapshot(&StateDocument {
+                meta: Some(json!({"providers": {
+                    "proxmox":{"configured":false,"enabled":false,"online":false},
+                    "beszel":{"configured":false,"enabled":false,"online":false},
+                    "immich":{"configured":false,"enabled":false,"online":false},
+                    "ollama":{"configured":false,"enabled":false,"online":false}
+                }})),
+                ..StateDocument::default()
+            })
+            .unwrap();
+        let saved: Value =
+            serde_json::from_slice(&fs::read(root.join("state.json")).unwrap()).unwrap();
+        for key in ["pve", "beszel", "immich", "ollama"] {
+            assert!(saved.get(key).is_none(), "{key}");
+        }
+        assert_eq!(saved["media"]["display"]["mode"], "playing");
+        assert_eq!(saved["custom"]["keep"], true);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn media_snapshot_persists_provider_health() {
+        let root =
+            std::env::temp_dir().join(format!("aooscope-media-health-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("state.json"), b"{}").unwrap();
+        let state = AppState::new(AppPaths::new(&root));
+        let statuses = std::collections::BTreeMap::from([(
+            "jellyfin".to_owned(),
+            json!({"configured": true, "enabled": true, "online": true, "last_success": 123, "error": null}),
+        )]);
+        state
+            .persist_media_snapshot_with_provider_statuses(&MediaDisplayEvent::default(), &statuses)
+            .unwrap();
+        let saved: Value =
+            serde_json::from_slice(&fs::read(root.join("state.json")).unwrap()).unwrap();
+        assert_eq!(saved["meta"]["providers"]["jellyfin"]["online"], true);
+        assert_eq!(saved["meta"]["providers"]["jellyfin"]["last_success"], 123);
         let _ = fs::remove_dir_all(root);
     }
 

@@ -72,6 +72,16 @@ pub struct PublicProviderDto {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ProviderStatusDto {
+    pub id: String,
+    pub configured: bool,
+    pub enabled: bool,
+    pub online: bool,
+    pub last_success: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct PageSummaryDto {
     pub id: String,
     pub name: String,
@@ -90,8 +100,8 @@ pub struct PagesListDto {
 }
 fn secret_fields(name: &str) -> &'static [&'static str] {
     match name {
-        "proxmox" => &["api_token"],
-        "beszel" => &["email", "password"],
+        "proxmox" => &["api_token", "token_id", "token_secret"],
+        "beszel" => &["email", "username", "password"],
         "jellyfin" | "silo" | "radarr" | "sonarr" | "immich" => &["api_key"],
         "qbittorrent" => &["username", "password"],
         _ => &[],
