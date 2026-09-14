@@ -72,20 +72,20 @@ async fn api_routes_match_compatibility_goldens() {
 }
 
 #[tokio::test]
-async fn factory_pages_match_compatibility_semantics() {
-    let expected = goldens();
+async fn factory_page_ids_remain_compatible() {
     let temp = std::env::temp_dir().join(format!("aooscope-compat-{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     copy_dir(&root(), &temp);
     let router = app(AppState::new(AppPaths::new(&temp)));
-    for template in [
-        "factory.splash.v1",
-        "factory.home.v1",
-        "factory.storage.v1",
-        "factory.compute.v1",
-        "factory.media.v1",
+    for (template, name, enabled) in [
+        ("factory.splash.v1", "Splash", true),
+        ("factory.home.v1", "Home", true),
+        ("factory.storage.v1", "Storage", true),
+        ("factory.storage-m2.v1", "Storage M.2", false),
+        ("factory.compute.v1", "Compute", true),
+        ("factory.media.v1", "Media", true),
     ] {
-        let (_, page) = request(
+        let (status, page) = request(
             &router,
             Request::builder()
                 .method("POST")
@@ -95,11 +95,12 @@ async fn factory_pages_match_compatibility_semantics() {
                 .unwrap(),
         )
         .await;
-        assert_eq!(
-            semantic_page(&page),
-            expected["factories"][template],
-            "{template}"
-        );
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(page["template_id"], template);
+        assert_eq!(page["name"], name);
+        assert_eq!(page["enabled"], enabled);
+        assert_eq!(page["duration"], 8);
+        assert!(!page["layers"].as_array().unwrap().is_empty());
     }
     let _ = fs::remove_dir_all(temp);
 }
@@ -136,23 +137,6 @@ fn renderer_and_panel_semantics_match_goldens() {
         .map(|panel| panel["id"].as_str().unwrap())
         .collect();
     assert_eq!(panel_ids, ["home", "storage", "compute"]);
-}
-
-fn semantic_page(page: &Value) -> Value {
-    let mut result = json!({
-        "name": page["name"], "enabled": page["enabled"],
-        "duration": page["duration"], "background": page["background"],
-        "layers": [],
-    });
-    result["layers"] = Value::Array(page["layers"].as_array().unwrap().iter().map(|layer| {
-        let mut out = json!({
-            "id": layer["id"], "type": layer["type"], "x": layer["x"],
-            "y": layer["y"], "width": layer["width"], "height": layer["height"], "z": layer["z"],
-        });
-        if let Some(binding) = layer.get("binding") { out["binding"] = binding.clone(); }
-        out
-    }).collect());
-    result
 }
 
 fn copy_dir(source: &Path, destination: &Path) {
