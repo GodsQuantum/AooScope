@@ -133,6 +133,34 @@ const CORE: &[MetricDef] = &[
         demo: Some(demo_52),
         widgets: NUMERIC,
     },
+    MetricDef {
+        id: "aooscope_hardware_gpu_temp_c",
+        pointer: "/hardware/gpu_temp_c",
+        label: "Température GPU",
+        provider_id: "local",
+        provider_name: "Hardware local",
+        category: "GPU",
+        value_type: "number",
+        unit: "°C",
+        min: Some(0.0),
+        max: Some(120.0),
+        demo: Some(demo_52),
+        widgets: NUMERIC,
+    },
+    MetricDef {
+        id: "aooscope_hardware_gpu_vram_pct",
+        pointer: "/hardware/gpu_vram_pct",
+        label: "VRAM utilisée",
+        provider_id: "local",
+        provider_name: "Hardware local",
+        category: "GPU",
+        value_type: "number",
+        unit: "%",
+        min: Some(0.0),
+        max: Some(100.0),
+        demo: Some(demo_52),
+        widgets: NUMERIC,
+    },
 ];
 
 const MEDIA: &[MetricDef] = &[
@@ -247,11 +275,28 @@ fn storage_metrics(doc: &Value) -> impl Iterator<Item = MetricDescriptor> + '_ {
     (0..6).flat_map(move |index| {
         let temp_id = format!("aooscope_pve_smart_{index}_temperature_c");
         let health_id = format!("aooscope_pve_smart_{index}_health");
+        let name_id = format!("aooscope_pve_disks_{index}_name");
+        let name = doc.pointer(&format!("/pve/disks/{index}/name")).cloned();
         let temp = doc
             .pointer(&format!("/pve/smart/{index}/temperature_c"))
             .cloned();
         let health = doc.pointer(&format!("/pve/smart/{index}/health")).cloned();
         [
+            MetricDescriptor {
+                id: name_id,
+                label: format!("Disque {} · nom", index + 1),
+                provider_id: "proxmox".into(),
+                provider_name: "Proxmox".into(),
+                category: "Stockage".into(),
+                value_type: "string".into(),
+                unit: String::new(),
+                min: None,
+                max: None,
+                online: name.is_some(),
+                value: name,
+                demo_value: Some(json!(format!("Disk {}", index + 1))),
+                recommended_widgets: TEXT.to_vec(),
+            },
             MetricDescriptor {
                 id: temp_id,
                 label: format!("Disque {} · température", index + 1),
@@ -326,7 +371,7 @@ pub fn provider_catalog() -> Vec<ProviderDescriptor> {
             "Beszel",
             "beszel",
             &["Monitoring", "Historique"],
-            &["username", "password"],
+            &["email", "password"],
         ),
         provider(
             "jellyfin",
