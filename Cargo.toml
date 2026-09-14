@@ -29,6 +29,8 @@ thiserror = "2.0.20"
 uuid = { version = "1", features = ["serde", "v4"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+fontdue = "0.9.4"
+damascene-fonts-inter = "0.1.0"
 sha2 = "0.10"
 
 [profile.release]
