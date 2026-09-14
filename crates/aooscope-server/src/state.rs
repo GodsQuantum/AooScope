@@ -172,8 +172,12 @@ impl AppState {
                 };
                 let secrets =
                     aooscope_config::load_provider_secrets(&state.paths).unwrap_or_default();
-                let telemetry =
-                    crate::providers::telemetry::collect_telemetry_state(&settings, &secrets).await;
+                let telemetry = crate::providers::telemetry::collect_telemetry_state_with_paths(
+                    &settings,
+                    &secrets,
+                    Some(&state.paths),
+                )
+                .await;
                 if let Err(error) = state.persist_telemetry_snapshot(&telemetry) {
                     tracing::warn!(%error, "telemetry state persistence failed");
                 }
