@@ -22,10 +22,25 @@ pub enum HttpError {
 
 impl HttpClient {
     pub fn new(verify_tls: bool) -> Result<Self, HttpError> {
-        Client::builder()
+        Self::new_with_ca(verify_tls, None)
+    }
+
+    pub fn new_with_ca(verify_tls: bool, ca_pem: Option<&[u8]>) -> Result<Self, HttpError> {
+        let mut builder = Client::builder()
             .timeout(Duration::from_secs(4))
             .danger_accept_invalid_certs(!verify_tls)
-            .user_agent("aooscope/0.3")
+            .user_agent("aooscope/0.3");
+        if verify_tls && let Some(ca_pem) = ca_pem {
+            let certificates =
+                reqwest::Certificate::from_pem_bundle(ca_pem).map_err(|_| HttpError::Request)?;
+            if certificates.is_empty() {
+                return Err(HttpError::Request);
+            }
+            for certificate in certificates {
+                builder = builder.add_root_certificate(certificate);
+            }
+        }
+        builder
             .build()
             .map(|client| Self { client })
             .map_err(|_| HttpError::Request)
@@ -139,4 +154,15 @@ pub fn cookie_from_response(response: &Response) -> Option<String> {
         .collect::<Vec<_>>()
         .join("; ");
     (!cookie.is_empty()).then_some(cookie)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HttpClient;
+
+    #[test]
+    fn custom_ca_is_validated_only_when_tls_verification_is_enabled() {
+        assert!(HttpClient::new_with_ca(true, Some(b"not-a-certificate")).is_err());
+        assert!(HttpClient::new_with_ca(false, Some(b"not-a-certificate")).is_ok());
+    }
 }
