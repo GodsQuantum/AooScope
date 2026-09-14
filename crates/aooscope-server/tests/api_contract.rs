@@ -168,6 +168,34 @@ async fn beszel_username_alias_is_private_email_and_disabling_preserves_it() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[tokio::test]
+async fn qbittorrent_credentials_use_the_collector_secret_keys() {
+    let root = std::env::temp_dir().join(format!("aooscope-qbittorrent-{}", uuid::Uuid::new_v4()));
+    aooscope_server::bootstrap(&AppPaths::new(&root)).unwrap();
+    let router = app(AppState::new(AppPaths::new(&root)));
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"providers":{"qbittorrent":{"enabled":true,"url":"http://qbit.test","username":"qbit-user","password":"qbit-password"}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let private: Value =
+        serde_json::from_slice(&std::fs::read(root.join("private/providers.json")).unwrap())
+            .unwrap();
+    assert_eq!(private["qbittorrent"]["username"], "qbit-user");
+    assert_eq!(private["qbittorrent"]["password"], "qbit-password");
+    assert!(private["qbittorrent"].get("email").is_none());
+    let _ = std::fs::remove_dir_all(root);
+}
+
 async fn get_json_from_router(router: axum::Router, path: &str) -> Value {
     let response = router
         .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
