@@ -42,4 +42,20 @@ describe('ProvidersPanel', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock).toHaveBeenCalledWith('/api/settings', expect.objectContaining({ method: 'PUT' }));
   });
+
+  it('preserves extension providers and can explicitly clear stored credentials', async () => {
+    const qbittorrentCatalog = [{ id: 'qbittorrent', name: 'qBittorrent', icon: 'download', categories: ['media'], credential_fields: ['username', 'password'] }];
+    const qbittorrentSettings = { qbittorrent: { enabled: true, url: 'https://downloads.example.test', verify_tls: true, secret_set: true } };
+    const settingsDocument = { display: {}, providers: { ...qbittorrentSettings, extension: { enabled: true, url: 'https://extension.example.test', verify_tls: true, custom: 'keep' } } };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => settingsDocument });
+    vi.stubGlobal('fetch', fetchMock);
+    render(ProvidersPanel, { props: { catalog: qbittorrentCatalog, settings: qbittorrentSettings, statuses: [], settingsDocument } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear stored qBittorrent credentials' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save providers' }));
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.providers.extension.custom).toBe('keep');
+    expect(body.providers.qbittorrent).toMatchObject({ username: null, password: null });
+  });
 });

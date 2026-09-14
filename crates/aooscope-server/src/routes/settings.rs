@@ -41,7 +41,7 @@ pub async fn put_settings(
                 if let Some(secret) = config.remove(*field) {
                     if secret.as_str().is_some_and(|value| !value.is_empty()) {
                         bucket.insert(
-                            if *field == "username" {
+                            if provider == "beszel" && *field == "username" {
                                 "email"
                             } else {
                                 *field
@@ -51,7 +51,7 @@ pub async fn put_settings(
                         );
                     } else if secret.is_null() || secret.as_str() == Some("") {
                         bucket.remove(*field);
-                        if *field == "username" {
+                        if provider == "beszel" && *field == "username" {
                             bucket.remove("email");
                         }
                     }

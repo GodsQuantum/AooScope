@@ -38,6 +38,13 @@
     const listed = await requestJson<PagesResponse>('/api/pages'); pages = listed.pages; documentRevision = listed.revision;
     const target = select ?? page?.id ?? pages[0]?.id; if (target && pages.some((item) => item.id === target)) await loadPage(target);
   }
+  async function refreshPagesPreservingCarousel() {
+    const drafts = pages.map((item) => ({ ...item }));
+    const listed = await requestJson<PagesResponse>('/api/pages');
+    const persisted = new Map(listed.pages.map((item) => [item.id, item]));
+    pages = [...drafts.filter((item) => persisted.has(item.id)).map((item) => ({ ...persisted.get(item.id)!, enabled: item.enabled, duration: item.duration })), ...listed.pages.filter((item) => !drafts.some((draft) => draft.id === item.id))];
+    documentRevision = listed.revision;
+  }
   async function loadLibrary() { const library = await requestJson<{ assets: Asset[]; presets: Preset[] }>('/api/media'); assets = library.assets; presets = library.presets; }
   onMount(() => {
     let alive = true;
@@ -57,15 +64,18 @@
   function selectPage(id: string) { loadPage(id).catch(() => {}); }
   function addWidget(type: WidgetType, extra?: Record<string, unknown>) { if (!page) return; const id = createWidgetId(); page = { ...page, layers: [...page.layers, { id, type, ...extra, x: 24, y: 24, width: type === 'text' ? 240 : 160, height: type === 'text' ? 48 : 80, z: page.layers.length + 1, text: type === 'text' ? 'Text' : undefined }] }; selected = id; notice = 'Draft changed'; }
   function updateLayer(id: string, changes: Partial<Layer>) { if (!page) return; page = { ...page, layers: page.layers.map((layer) => layer.id === id ? { ...layer, ...clampRect({ ...layer, ...changes }) } : layer) }; notice = 'Draft changed'; }
-  async function savePage() { if (!page) return; try { page = await requestJson<Page>(`/api/pages/${page.id}`, 'PUT', page); notice = 'Page saved'; await loadPages(page.id); } catch (cause) { error = String(cause); } }
-  async function saveCarousel() { try { await requestJson('/api/carousel', 'PUT', { revision: documentRevision, items: pages.map(({ id, enabled, duration }) => ({ id, enabled, duration })) }); notice = 'Carousel saved'; await loadPages(page?.id); } catch (cause) { error = String(cause); } }
+  async function persistPageDraft() { if (!page) return; const current = page; const { enabled: _enabled, duration: _duration, ...draft } = current; const saved = await requestJson<Page>(`/api/pages/${page.id}`, 'PUT', draft); page = { ...saved, enabled: current.enabled, duration: current.duration }; await refreshPagesPreservingCarousel(); }
+  async function savePage() { try { await persistPageDraft(); notice = 'Page saved'; } catch (cause) { error = String(cause); } }
+  async function persistCarouselDraft() { const saved = await requestJson<{ revision: number }>('/api/carousel', 'PUT', { revision: documentRevision, items: pages.map(({ id, enabled, duration }) => ({ id, enabled, duration })) }); documentRevision = saved.revision; }
+  async function saveCarousel() { try { await persistCarouselDraft(); notice = 'Carousel saved'; } catch (cause) { error = String(cause); } }
   async function createPage() { try { const created = await requestJson<Page>('/api/pages', 'POST', { name: 'New page' }); await loadPages(created.id); } catch (cause) { error = String(cause); } }
   async function duplicatePage(id: string) { try { const created = await requestJson<Page>(`/api/pages/${id}/duplicate`, 'POST', {}); await loadPages(created.id); } catch (cause) { error = String(cause); } }
-  async function restorePage(id: string) { try { await requestJson<Page>(`/api/pages/${id}/restore`, 'POST', {}); await loadPages(id); notice = 'Factory page restored'; } catch (cause) { error = String(cause); } }
+  async function restorePage(id: string) { if (!confirm('Restore this factory page? Your page customizations will be replaced.')) return; try { await requestJson<Page>(`/api/pages/${id}/restore`, 'POST', {}); await loadPages(id); notice = 'Factory page restored'; } catch (cause) { error = String(cause); } }
   async function deletePage(id: string) { if (!confirm('Delete this page?')) return; try { await requestJson(`/api/pages/${id}`, 'DELETE'); await loadPages(); notice = 'Page deleted'; } catch (cause) { error = String(cause); } }
   async function preview() { if (!page) return; try { const blob = await requestBlob('/api/preview', 'POST', { page }); closePreview(); previewUrl = URL.createObjectURL(blob); } catch (cause) { error = String(cause); } }
-  async function apply() { try { await requestJson('/api/apply', 'POST', {}); notice = 'Applied to LCD'; } catch (cause) { error = String(cause); } }
-  async function orbit(sourceAssetId: string, displayName?: string) { try { const preset = await requestJson<Preset>('/api/media/presets/orbit', 'POST', { source_asset_id: sourceAssetId, ...(displayName ? { display_name: displayName } : {}) }); presets = [...presets.filter((item) => item.id !== preset.id), preset]; const splash = pages.find((item) => item.name === 'Splash'); if (splash) await loadPage(splash.id); await apply(); } catch (cause) { error = String(cause); } }
+  async function applyPersisted() { await requestJson('/api/apply', 'POST', {}); notice = 'Applied to LCD'; }
+  async function apply() { try { await persistPageDraft(); await persistCarouselDraft(); await applyPersisted(); } catch (cause) { error = String(cause); } }
+  async function orbit(sourceAssetId: string, displayName?: string) { try { const preset = await requestJson<Preset>('/api/media/presets/orbit', 'POST', { source_asset_id: sourceAssetId, ...(displayName ? { display_name: displayName } : {}) }); presets = [...presets.filter((item) => item.id !== preset.id), preset]; await refreshPagesPreservingCarousel(); const splash = pages.find((item) => item.name === 'Splash'); if (splash) await loadPage(splash.id); await persistCarouselDraft(); await applyPersisted(); } catch (cause) { error = String(cause); } }
   async function previewOrbit() { const splash = pages.find((item) => item.name === 'Splash'); if (splash) await loadPage(splash.id).then(preview).catch((cause) => error = String(cause)); }
   async function upload(files: File[]) { try { for (const file of files) { const form = new FormData(); form.append('file', file); const response = await fetch('/api/media', { method: 'POST', body: form }); if (!response.ok) throw new Error(`Upload: HTTP ${response.status}`); } await loadLibrary(); notice = `${files.length} asset${files.length === 1 ? '' : 's'} uploaded`; } catch (cause) { error = String(cause); } }
   async function replaceAsset(id: string, file: File) { try { const form = new FormData(); form.append('file', file); const response = await fetch(`/api/media/${id}`, { method: 'PUT', body: form }); if (!response.ok) throw new Error(`Replace: HTTP ${response.status}`); await loadLibrary(); notice = 'Asset replaced'; } catch (cause) { error = String(cause); } }
