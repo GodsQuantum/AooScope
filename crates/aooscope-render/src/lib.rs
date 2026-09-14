@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod compiler;
+mod geometry;
 mod media;
 mod revisions;
 

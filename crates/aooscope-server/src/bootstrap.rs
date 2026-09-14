@@ -18,6 +18,7 @@ pub fn bootstrap(paths: &AppPaths) -> Result<(), ConfigError> {
         "page-splash",
         "page-home",
         "page-storage",
+        "page-storage-m2",
         "page-compute",
         "page-media",
     ]
@@ -28,6 +29,7 @@ pub fn bootstrap(paths: &AppPaths) -> Result<(), ConfigError> {
         ("page-splash", "factory.splash.v1"),
         ("page-home", "factory.home.v1"),
         ("page-storage", "factory.storage.v1"),
+        ("page-storage-m2", "factory.storage-m2.v1"),
         ("page-compute", "factory.compute.v1"),
         ("page-media", "factory.media.v1"),
     ] {
