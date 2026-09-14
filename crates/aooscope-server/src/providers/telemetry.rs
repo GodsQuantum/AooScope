@@ -1,7 +1,8 @@
 use super::http::HttpClient;
+use aooscope_config::AppPaths;
 use aooscope_types::{ProviderSecrets, Settings, StateDocument};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 pub fn normalize_proxmox(value: &Value) -> Value {
     let status = value.get("status").unwrap_or(value);
@@ -103,6 +104,50 @@ pub fn proxmox_authorization(
     }
 }
 
+fn pve_private_path(paths: &AppPaths, env_name: &str, default_name: &str) -> PathBuf {
+    std::env::var_os(env_name)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| paths.root.join("private").join(default_name))
+}
+
+fn legacy_proxmox_credentials(paths: &AppPaths) -> Option<(String, String)> {
+    let path = pve_private_path(paths, "PVE_TOKEN_FILE", "pve-token.json");
+    let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    let token_id = value
+        .get("full-tokenid")
+        .or_else(|| value.get("token_id"))
+        .and_then(Value::as_str)?
+        .to_owned();
+    let token_secret = value
+        .get("value")
+        .or_else(|| value.get("token_secret"))
+        .and_then(Value::as_str)?
+        .to_owned();
+    (!token_id.is_empty() && !token_secret.is_empty()).then_some((token_id, token_secret))
+}
+
+fn proxmox_auth_values(
+    secrets: &ProviderSecrets,
+    paths: Option<&AppPaths>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let api_token = secret(secrets, "proxmox", &["api_token"]).map(str::to_owned);
+    let token_id = secret(secrets, "proxmox", &["token_id"]).map(str::to_owned);
+    let token_secret = secret(secrets, "proxmox", &["token_secret"]).map(str::to_owned);
+    if api_token.is_some() || (token_id.is_some() && token_secret.is_some()) {
+        return (api_token, token_id, token_secret);
+    }
+    if let Some((legacy_id, legacy_secret)) = paths.and_then(legacy_proxmox_credentials) {
+        return (None, Some(legacy_id), Some(legacy_secret));
+    }
+    (api_token, token_id, token_secret)
+}
+
+fn proxmox_ca_pem(paths: Option<&AppPaths>) -> Option<Vec<u8>> {
+    let paths = paths?;
+    let path = pve_private_path(paths, "PVE_CA_FILE", "pve-root-ca.pem");
+    fs::read(path).ok().filter(|bytes| !bytes.is_empty())
+}
+
 fn status(configured: bool, online: bool, error: Option<&str>) -> Value {
     json!({"configured": configured, "enabled": configured, "online": online, "last_success": online.then(chrono_like_now), "error": error})
 }
@@ -128,20 +173,27 @@ async fn provider_json(
         .map_err(|error| error.to_string())
 }
 
-async fn collect_proxmox(settings: &Settings, secrets: &ProviderSecrets) -> Result<Value, String> {
+async fn collect_proxmox(
+    settings: &Settings,
+    secrets: &ProviderSecrets,
+    paths: Option<&AppPaths>,
+) -> Result<Value, String> {
     let config = configured(settings, "proxmox").ok_or_else(|| "not configured".to_owned())?;
     let node = config
         .node
         .as_deref()
         .filter(|value| !value.is_empty())
         .unwrap_or("localhost");
+    let (api_token, token_id, token_secret) = proxmox_auth_values(secrets, paths);
     let authorization = proxmox_authorization(
-        secret(secrets, "proxmox", &["api_token"]),
-        secret(secrets, "proxmox", &["token_id"]),
-        secret(secrets, "proxmox", &["token_secret"]),
+        api_token.as_deref(),
+        token_id.as_deref(),
+        token_secret.as_deref(),
     );
     let headers = [("Authorization", authorization.as_str())];
-    let client = HttpClient::new(config.verify_tls).map_err(|_| "client unavailable".to_owned())?;
+    let ca_pem = proxmox_ca_pem(paths);
+    let client = HttpClient::new_with_ca(config.verify_tls, ca_pem.as_deref())
+        .map_err(|_| "client unavailable".to_owned())?;
     let status = client
         .get_json(
             &config.url,
@@ -338,9 +390,18 @@ pub async fn test_provider(
     settings: &Settings,
     secrets: &ProviderSecrets,
 ) -> Result<(), String> {
+    test_provider_with_paths(name, settings, secrets, None).await
+}
+
+pub async fn test_provider_with_paths(
+    name: &str,
+    settings: &Settings,
+    secrets: &ProviderSecrets,
+    paths: Option<&AppPaths>,
+) -> Result<(), String> {
     match name {
         "local" => Ok(()),
-        "proxmox" => collect_proxmox(settings, secrets).await.map(|_| ()),
+        "proxmox" => collect_proxmox(settings, secrets, paths).await.map(|_| ()),
         "beszel" | "immich" | "ollama" => collect_remote(settings, secrets, name).await.map(|_| ()),
         "jellyfin" | "silo" | "radarr" | "sonarr" | "qbittorrent" => {
             crate::providers::media::collect_provider(name, settings, secrets)
@@ -356,6 +417,14 @@ pub async fn collect_telemetry_state(
     settings: &Settings,
     secrets: &ProviderSecrets,
 ) -> StateDocument {
+    collect_telemetry_state_with_paths(settings, secrets, None).await
+}
+
+pub async fn collect_telemetry_state_with_paths(
+    settings: &Settings,
+    secrets: &ProviderSecrets,
+    paths: Option<&AppPaths>,
+) -> StateDocument {
     let mut state = StateDocument {
         hardware: Some(local_sysfs()),
         ..StateDocument::default()
@@ -363,7 +432,7 @@ pub async fn collect_telemetry_state(
     let mut providers = BTreeMap::new();
     providers.insert("local", status(true, true, None));
     if configured(settings, "proxmox").is_some() {
-        match collect_proxmox(settings, secrets).await {
+        match collect_proxmox(settings, secrets, paths).await {
             Ok(value) => {
                 state.pve = Some(value);
                 providers.insert("proxmox", status(true, true, None));
@@ -397,9 +466,13 @@ pub async fn collect_telemetry_state(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_local_sysfs, normalize_ollama, normalize_proxmox, proxmox_authorization,
+        normalize_local_sysfs, normalize_ollama, normalize_proxmox, proxmox_auth_values,
+        proxmox_authorization, proxmox_ca_pem,
     };
+    use aooscope_config::AppPaths;
+    use aooscope_types::ProviderSecrets;
     use serde_json::json;
+    use std::fs;
 
     #[test]
     fn proxmox_normalization_keeps_guest_disk_and_smart_semantics() {
@@ -441,6 +514,56 @@ mod tests {
         assert_eq!(value["models"], 1);
         assert_eq!(value["running"], 1);
         assert!(!serde_json::to_string(&value).unwrap().contains("secret"));
+    }
+
+    #[test]
+    fn legacy_proxmox_files_supply_auth_and_ca_without_copying_secrets() {
+        let root =
+            std::env::temp_dir().join(format!("aooscope-pve-legacy-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("private")).unwrap();
+        fs::write(
+            root.join("private/pve-token.json"),
+            br#"{"full-tokenid":"user@pam!lcd","value":"secret-value"}"#,
+        )
+        .unwrap();
+        fs::write(root.join("private/pve-root-ca.pem"), b"test-ca").unwrap();
+        let paths = AppPaths::new(&root);
+        let secrets = ProviderSecrets::new();
+
+        let (api_token, token_id, token_secret) = proxmox_auth_values(&secrets, Some(&paths));
+        assert_eq!(api_token, None);
+        assert_eq!(token_id.as_deref(), Some("user@pam!lcd"));
+        assert_eq!(token_secret.as_deref(), Some("secret-value"));
+        assert_eq!(
+            proxmox_ca_pem(Some(&paths)).as_deref(),
+            Some(b"test-ca".as_slice())
+        );
+        assert!(!paths.provider_secrets().exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn provider_secret_store_takes_precedence_over_legacy_proxmox_file() {
+        let root = std::env::temp_dir().join(format!(
+            "aooscope-pve-secret-priority-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(root.join("private")).unwrap();
+        fs::write(
+            root.join("private/pve-token.json"),
+            br#"{"full-tokenid":"legacy@pam!lcd","value":"legacy-secret"}"#,
+        )
+        .unwrap();
+        let paths = AppPaths::new(&root);
+        let secrets: ProviderSecrets = serde_json::from_value(json!({
+            "proxmox": {"token_id":"admin@pam!lcd","token_secret":"admin-secret"}
+        }))
+        .unwrap();
+
+        let (_, token_id, token_secret) = proxmox_auth_values(&secrets, Some(&paths));
+        assert_eq!(token_id.as_deref(), Some("admin@pam!lcd"));
+        assert_eq!(token_secret.as_deref(), Some("admin-secret"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

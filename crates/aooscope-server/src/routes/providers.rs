@@ -99,7 +99,14 @@ pub async fn test_provider(
         if let Some(provider) = test_settings.providers.get_mut(&id) {
             provider.enabled = true;
         }
-        match crate::providers::telemetry::test_provider(&id, &test_settings, &secrets).await {
+        match crate::providers::telemetry::test_provider_with_paths(
+            &id,
+            &test_settings,
+            &secrets,
+            Some(&state.paths),
+        )
+        .await
+        {
             Ok(()) => {
                 result.online = true;
                 result.last_success = Some(
