@@ -151,6 +151,21 @@ fn factory_semantics_cover_home_storage_compute_media_and_splash() {
     }
 }
 
+#[test]
+fn full_ring_endpoint_is_filled_without_track_seam() {
+    let root = temp_root("full-ring");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"ring100", "name":"Ring 100", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#071019"},
+        "layers":[{"id":"ring","type":"ring","x":40,"y":40,"width":180,"height":180,"z":1,"color":"#35d9ff","track_color":"#1d2632","thickness":18,"value":100}]
+    })).unwrap();
+    let image = compile_page(&page, &StateDocument::default(), &media, 100, 0.0)
+        .unwrap()
+        .image;
+    assert_eq!(image.get_pixel(130, 49).0, [53, 217, 255]);
+}
+
 fn temp_root(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("aooscope-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);

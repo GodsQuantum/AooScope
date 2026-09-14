@@ -21,7 +21,6 @@ fi
 needles=("C""loud 9" "clo""ud9" "192.""168.1." "CT""130" "Arez""ki" "/srv/lxc/""administration")
 while IFS= read -r path; do
   [[ -f "$path" ]] || continue
-  [[ "$path" == Sources/* ]] && continue
   for needle in "${needles[@]}"; do
     if [[ "${path,,}" == *"${needle,,}"* ]] || grep -IqiF -- "$needle" "$path"; then
       printf 'FAIL: personal installation identifier in %s: %s\n' "$path" "$needle"

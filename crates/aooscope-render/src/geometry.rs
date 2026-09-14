@@ -87,7 +87,15 @@ pub(crate) fn arc(
         thickness / 2,
         if progress > 0.0 { fill } else { track },
     );
-    circle_at_angle(image, cx, cy, radius, end, thickness / 2, track);
+    circle_at_angle(
+        image,
+        cx,
+        cy,
+        radius,
+        end,
+        thickness / 2,
+        if progress >= 1.0 { fill } else { track },
+    );
     if progress > 0.0 && progress < 1.0 {
         circle_at_angle(image, cx, cy, radius, active_end, thickness / 2, fill);
     }
