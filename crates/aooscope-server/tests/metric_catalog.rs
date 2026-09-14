@@ -1,5 +1,6 @@
 use aooscope_config::AppPaths;
 use aooscope_server::{AppState, app};
+use aooscope_types::StateDocument;
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
@@ -7,6 +8,29 @@ use axum::{
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tower::ServiceExt;
+
+fn state_with_disks(count: usize) -> StateDocument {
+    let disks = (0..count)
+        .map(|index| {
+            serde_json::json!({
+                "name": format!("Disk {index}"),
+                "path": format!("/dev/sd{}", (b'a' + index as u8) as char),
+                "size": 1_000_000_000_u64,
+                "used": 250_000_000_u64,
+                "avail": 750_000_000_u64,
+                "usage_pct": 25.0,
+                "type": "ssd"
+            })
+        })
+        .collect::<Vec<_>>();
+    let smart = (0..count)
+        .map(|index| serde_json::json!({"temperature_c": 30 + index, "health": "PASSED"}))
+        .collect::<Vec<_>>();
+    serde_json::from_value(serde_json::json!({
+        "pve": {"disks": disks, "smart": smart}
+    }))
+    .unwrap()
+}
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/appdata-v1")
@@ -78,16 +102,35 @@ async fn offline_media_metrics_keep_demo_values_and_provider_catalog_is_explicit
 
 #[tokio::test]
 async fn storage_metric_keeps_legacy_plural_disk_name_binding() {
-    let (_, body) = get_json("/api/metrics").await;
-    let metrics = body["metrics"].as_array().unwrap();
+    let metrics = aooscope_server::metrics::metric_catalog(&state_with_disks(1));
     assert!(
         metrics
             .iter()
-            .any(|m| m["id"] == "aooscope_pve_disks_0_name")
+            .any(|metric| metric.id == "aooscope_pve_disks_0_name")
     );
     assert!(
         !metrics
             .iter()
-            .any(|m| m["id"] == "aooscope_pve_disk_0_name")
+            .any(|metric| metric.id == "aooscope_pve_disk_0_name")
     );
+}
+
+#[test]
+fn storage_metric_count_matches_actual_disk_inventory() {
+    for (disk_count, expected_metric_count) in [(0, 0), (1, 7), (8, 56), (10, 70)] {
+        let metrics = aooscope_server::metrics::metric_catalog(&state_with_disks(disk_count));
+        let storage_count = metrics
+            .iter()
+            .filter(|metric| metric.category == "Stockage")
+            .count();
+        assert_eq!(storage_count, expected_metric_count, "{disk_count} disks");
+
+        if disk_count == 8 {
+            assert!(
+                metrics
+                    .iter()
+                    .any(|metric| metric.id == "aooscope_pve_disks_7_size_bytes")
+            );
+        }
+    }
 }

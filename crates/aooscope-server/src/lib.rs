@@ -10,6 +10,7 @@ pub mod openapi;
 pub mod providers;
 pub mod routes;
 pub mod state;
+pub mod storage;
 
 pub use app::app;
 pub use bootstrap::bootstrap;
