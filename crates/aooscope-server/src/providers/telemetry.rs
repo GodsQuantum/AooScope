@@ -99,7 +99,7 @@ pub fn proxmox_authorization(
     token_secret: Option<&str>,
 ) -> String {
     match (token_id, token_secret) {
-        (Some(id), Some(secret)) => format!("PVEAPIToken={id}:{secret}"),
+        (Some(id), Some(secret)) => format!("PVEAPIToken={id}={secret}"),
         _ => format!("PVEAPIToken={}", api_token.unwrap_or("")),
     }
 }
@@ -574,7 +574,7 @@ mod tests {
         );
         assert_eq!(
             proxmox_authorization(None, Some("user@pam!token"), Some("secret")),
-            "PVEAPIToken=user@pam!token:secret"
+            "PVEAPIToken=user@pam!token=secret"
         );
     }
 }
