@@ -31,11 +31,26 @@ pub fn normalize_proxmox(value: &Value) -> Value {
         "memory_total_bytes": total,
         "guests_running": guests.iter().filter(|guest| guest.get("status").and_then(Value::as_str) == Some("running")).count(),
         "guests_total": guests.len(),
-        "disks": disks.iter().map(|disk| json!({
-            "name": disk.get("model").or_else(|| disk.get("devpath")).cloned().unwrap_or(Value::Null),
-            "path": disk.get("devpath"),
-            "health": disk.get("health")
-        })).collect::<Vec<_>>(),
+        "disks": disks.iter().map(|disk| {
+            let used = disk.get("used").and_then(Value::as_f64);
+            let avail = disk.get("avail").and_then(Value::as_f64);
+            let usage_pct = disk.get("usage_pct").cloned().or_else(|| {
+                used.zip(avail).and_then(|(used, avail)| {
+                    let total = used + avail;
+                    (total > 0.0).then(|| json!(used * 100.0 / total))
+                })
+            });
+            json!({
+                "name": disk.get("model").or_else(|| disk.get("devpath")).cloned().unwrap_or(Value::Null),
+                "path": disk.get("devpath"),
+                "health": disk.get("health"),
+                "size": disk.get("size"),
+                "type": disk.get("type"),
+                "used": disk.get("used"),
+                "avail": disk.get("avail"),
+                "usage_pct": usage_pct
+            })
+        }).collect::<Vec<_>>(),
         "smart": smart.iter().map(|disk| json!({
             "health": disk.get("health"),
             "temperature_c": disk.get("temperature").or_else(|| disk.get("temperature_c"))
@@ -484,6 +499,26 @@ mod tests {
         assert_eq!(value["guests_running"], 1);
         assert_eq!(value["disks"][0]["name"], "Disk A");
         assert_eq!(value["smart"][0]["health"], "PASSED");
+    }
+
+    #[test]
+    fn proxmox_normalization_preserves_disk_size_type_and_calculates_usage() {
+        let value = normalize_proxmox(&json!({
+            "disks": [{
+                "devpath": "/dev/nvme0n1",
+                "model": "Disk A",
+                "size": 1_000,
+                "type": "ssd",
+                "used": 250,
+                "avail": 750
+            }]
+        }));
+
+        assert_eq!(value["disks"][0]["size"], 1_000);
+        assert_eq!(value["disks"][0]["type"], "ssd");
+        assert_eq!(value["disks"][0]["used"], 250);
+        assert_eq!(value["disks"][0]["avail"], 750);
+        assert_eq!(value["disks"][0]["usage_pct"], 25.0);
     }
 
     #[test]
