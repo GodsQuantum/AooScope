@@ -17,6 +17,7 @@ export async function getJson<P extends keyof paths>(path: P): Promise<OkJson<P>
 export async function requestJson<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(path, { method, headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+  if (response.status === 204) return undefined as T;
   return await response.json() as T;
 }
 
