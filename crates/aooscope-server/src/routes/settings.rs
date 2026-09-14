@@ -37,9 +37,11 @@ where
 mod tests {
     use super::coordinated_write;
     use aooscope_types::{ProviderSecrets, Settings};
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
-    fn rolls_back_public_settings_when_private_commit_fails() {
+    fn rolls_back_settings_and_private_secrets_when_private_commit_fails() {
         let old = Settings {
             display: Default::default(),
             providers: Default::default(),
@@ -52,21 +54,30 @@ mod tests {
             },
             ..old.clone()
         };
-        let old_secrets = ProviderSecrets::default();
+        let old_secrets: ProviderSecrets = serde_json::from_value(serde_json::json!({
+            "proxmox": { "api_token": "old-token" }
+        }))
+        .unwrap();
+        let new_secrets: ProviderSecrets = serde_json::from_value(serde_json::json!({
+            "proxmox": { "api_token": "new-token" }
+        }))
+        .unwrap();
         let root = std::env::temp_dir().join(format!("aooscope-settings-{}", uuid::Uuid::new_v4()));
         let settings_path = root.join("settings.json");
         let secrets_path = root.join("private/providers.json");
         std::fs::create_dir_all(secrets_path.parent().unwrap()).unwrap();
         aooscope_config::atomic_write_json(&settings_path, &old).unwrap();
+        aooscope_config::atomic_write_private_json(&secrets_path, &old_secrets).unwrap();
         let mut writes = 0;
         coordinated_write(
             (&settings_path, &secrets_path),
             (&old, &old_secrets),
-            (&new, &old_secrets),
+            (&new, &new_secrets),
             aooscope_config::atomic_write_json,
             |path, value| {
                 writes += 1;
                 if writes == 1 {
+                    aooscope_config::atomic_write_private_json(path, value).unwrap();
                     return Err(aooscope_config::ConfigError::NoParent(path.to_path_buf()));
                 }
                 aooscope_config::atomic_write_private_json(path, value)
@@ -75,7 +86,19 @@ mod tests {
         .unwrap_err();
         let written: Settings =
             serde_json::from_slice(&std::fs::read(&settings_path).unwrap()).unwrap();
-        assert_eq!(written.display.brightness, old.display.brightness);
+        assert_eq!(written, old);
+        let written_secrets: ProviderSecrets =
+            serde_json::from_slice(&std::fs::read(&secrets_path).unwrap()).unwrap();
+        assert_eq!(written_secrets, old_secrets);
+        #[cfg(unix)]
+        assert_eq!(
+            std::fs::metadata(&secrets_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -60,4 +60,34 @@ describe('DisplayControls', () => {
     await view.rerender({ settings: { schedule: [{ start: '18:00', end: '06:00', brightness: 20 }] } });
     expect(start.value).toBe('23:15');
   });
+
+  it('hydrates canonical and later clean parent settings after save', async () => {
+    const canonical = { brand: 'Canonical', timezone: 'UTC', switch_seconds: 20, schedule_enabled: true, schedule: [], brightness: 61 };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ display: canonical, providers: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const view = render(DisplayControls, { props: { capabilities: { width: 960, height: 376, native_brightness: false, power_control: true }, powerOn: true, brightness: 73, settings: { brand: 'Initial' }, settingsDocument: { display: {}, providers: {} } } });
+    const brand = screen.getByLabelText('Brand') as HTMLInputElement;
+    await fireEvent.input(brand, { target: { value: 'Local edit' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save display settings' }));
+    await view.rerender({ settings: canonical, brightness: 61 });
+    await waitFor(() => expect(brand.value).toBe('Canonical'));
+    await view.rerender({ settings: { ...canonical, brand: 'Later update' }, brightness: 61 });
+    await waitFor(() => expect(brand.value).toBe('Later update'));
+  });
+
+  it('keeps edits made while a successful save is pending', async () => {
+    let resolveSave!: (value: { ok: boolean; json: () => Promise<unknown> }) => void;
+    const save = new Promise<{ ok: boolean; json: () => Promise<unknown> }>((resolve) => { resolveSave = resolve; });
+    const canonical = { brand: 'Submitted', timezone: 'UTC', switch_seconds: 20, schedule_enabled: true, schedule: [], brightness: 61 };
+    vi.stubGlobal('fetch', vi.fn(() => save));
+    const view = render(DisplayControls, { props: { capabilities: { width: 960, height: 376, native_brightness: false, power_control: true }, powerOn: true, brightness: 73, settings: { brand: 'Initial' }, settingsDocument: { display: {}, providers: {} } } });
+    const brand = screen.getByLabelText('Brand') as HTMLInputElement;
+    await fireEvent.input(brand, { target: { value: 'Submitted' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save display settings' }));
+    await fireEvent.input(brand, { target: { value: 'Newer local edit' } });
+    resolveSave({ ok: true, json: async () => ({ display: canonical, providers: {} }) });
+    await screen.findByText('Display settings saved');
+    await view.rerender({ settings: canonical, brightness: 61 });
+    expect(brand.value).toBe('Newer local edit');
+  });
 });

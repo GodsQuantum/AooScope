@@ -6,12 +6,12 @@
   let { capabilities, powerOn, brightness, settings, settingsDocument, onpower, onbrightness, onsaved }: { capabilities: Capabilities; powerOn: boolean; brightness: number; settings?: Partial<Display>; settingsDocument?: Record<string, unknown>; onpower?: (on: boolean) => void; onbrightness?: (value: number) => void; onsaved?: (document: Record<string, unknown>) => void } = $props();
   let busy = $state(false); let error = $state(''); let saved = $state('');
   const defaults = (): Display => ({ brand: 'AOOSCOPE', timezone: 'UTC', switch_seconds: 8, schedule_enabled: false, schedule: [{ start: '22:00', end: '08:00', brightness: 70 }], brightness: 100 });
-  let form = $state<Display>(defaults()); let dirty = $state(false);
+  let form = $state<Display>(defaults()); let dirty = $state(false); let editGeneration = 0;
   $effect(() => { if (!dirty) form = { ...defaults(), ...settings, brightness, schedule: settings?.schedule ?? defaults().schedule }; });
-  function markDirty() { dirty = true; }
+  function markDirty() { dirty = true; editGeneration += 1; }
   async function setPower(on: boolean) { busy = true; error = ''; try { await requestJson<{ on: boolean }>('/api/display/power', 'POST', { on }); onpower?.(on); } catch (cause) { error = String(cause); } finally { busy = false; } }
   async function setLuminance(value: number) { busy = true; error = ''; try { const status = await requestJson<{ brightness: number }>('/api/display/luminance', 'POST', { value }); form.brightness = status.brightness; onbrightness?.(status.brightness); } catch (cause) { error = String(cause); } finally { busy = false; } }
-  async function save() { busy = true; error = ''; saved = ''; try { const document = await requestJson<Record<string, unknown>>('/api/settings', 'PUT', { ...(settingsDocument ?? {}), display: form }); saved = 'Display settings saved'; onsaved?.(document); } catch (cause) { error = String(cause); } finally { busy = false; } }
+  async function save() { const generation = editGeneration; busy = true; error = ''; saved = ''; try { const document = await requestJson<Record<string, unknown>>('/api/settings', 'PUT', { ...(settingsDocument ?? {}), display: form }); saved = 'Display settings saved'; onsaved?.(document); if (generation === editGeneration) dirty = false; } catch (cause) { error = String(cause); } finally { busy = false; } }
   function removeRule(index: number) { markDirty(); form.schedule = form.schedule.filter((_, item) => item !== index); }
 </script>
 

@@ -36,6 +36,104 @@ function initial(path: string) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('admin page persistence', () => {
+  it('merges carousel edits made while a refresh is pending', async () => {
+    let pagesGets = 0;
+    let resolveRefresh!: (value: ReturnType<typeof response>) => void;
+    const refresh = new Promise<ReturnType<typeof response>>((resolve) => { resolveRefresh = resolve; });
+    const extra = { ...splash, id: 'old', name: 'Old', revision: 1 };
+    const added = { ...splash, id: 'added', name: 'Added', revision: 5 };
+    const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
+      if (path === '/api/pages' && ++pagesGets > 1) return refresh;
+      if (path === '/api/pages/home' && options.method === 'PUT') return response({ ...home, revision: 4 });
+      if (path === '/api/pages') return response({ schema_version: 1, revision: 7, carousel: ['home', 'splash', 'old'], pages: [summary(home), summary(splash), summary(extra)] });
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save page' }));
+    await waitFor(() => expect(pagesGets).toBe(2));
+    await fireEvent.click(screen.getByRole('button', { name: 'Move Home down' }));
+    await fireEvent.click(screen.getAllByRole('checkbox', { name: 'Enabled' })[1]);
+    await fireEvent.change(screen.getByRole('spinbutton', { name: 'Duration Home' }), { target: { value: '15' } });
+    resolveRefresh(response({ schema_version: 1, revision: 8, carousel: ['splash', 'home', 'added'], pages: [summary({ ...home, revision: 6 }), summary({ ...splash, revision: 4 }), summary(added)] }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Added Revision 5/ })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /Old Revision 1/ })).toBeNull();
+    expect((screen.getByRole('spinbutton', { name: 'Duration Home' }) as HTMLInputElement).value).toBe('15');
+    expect((screen.getAllByRole('checkbox', { name: 'Enabled' })[1] as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByRole('button', { name: 'Added Revision 5' })).toBeTruthy();
+    expect(screen.getByText('Home', { selector: 'h2' })).toBeTruthy();
+  });
+
+  it('keeps a newer user selection during create', async () => {
+    let resolveCreate!: (value: ReturnType<typeof response>) => void;
+    const create = new Promise<ReturnType<typeof response>>((resolve) => { resolveCreate = resolve; });
+    const created = { ...home, id: 'new', name: 'New page', revision: 1 };
+    const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
+      if (path === '/api/pages' && options.method === 'POST') return create;
+      if (path === '/api/pages/new') return response(created);
+      if (path === '/api/pages') return response({ ...initial(path), pages: [summary(home), summary(splash), summary(created)] });
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create page' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Splash Revision 2' }));
+    resolveCreate(response(created));
+    await waitFor(() => expect(screen.getByText('Splash', { selector: 'h2' })).toBeTruthy());
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/pages/new', expect.anything());
+  });
+
+  it('keeps a newer user selection while a page save is pending', async () => {
+    let resolveSave!: (value: ReturnType<typeof response>) => void;
+    const save = new Promise<ReturnType<typeof response>>((resolve) => { resolveSave = resolve; });
+    const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
+      if (path === '/api/pages/home' && options.method === 'PUT') return save;
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save page' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pages/home', expect.objectContaining({ method: 'PUT' })));
+    await fireEvent.click(screen.getByRole('button', { name: 'Splash Revision 2' }));
+    await waitFor(() => expect(screen.getByText('Splash', { selector: 'h2' })).toBeTruthy());
+    resolveSave(response({ ...home, revision: 4 }));
+    await screen.findByText('Page saved');
+    expect(screen.getByText('Splash', { selector: 'h2' })).toBeTruthy();
+  });
+
+  it('keeps a newer user selection while deleting the current page', async () => {
+    let deleted = false;
+    let resolveDelete!: (value: ReturnType<typeof response>) => void;
+    let resolveSplash!: (value: ReturnType<typeof response>) => void;
+    const deletion = new Promise<ReturnType<typeof response>>((resolve) => { resolveDelete = resolve; });
+    const splashLoad = new Promise<ReturnType<typeof response>>((resolve) => { resolveSplash = resolve; });
+    const storage = { ...home, id: 'storage', name: 'Storage', revision: 1, template_id: 'factory.storage.v1' };
+    const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
+      if (path === '/api/pages/home' && options.method === 'DELETE') return deletion;
+      if (path === '/api/pages') {
+        const listed = deleted ? [summary(storage), summary(splash)] : [summary(home), summary(storage), summary(splash)];
+        return response({ schema_version: 1, revision: deleted ? 8 : 7, carousel: listed.map(({ id }) => id), pages: listed });
+      }
+      if (path === '/api/pages/splash') return splashLoad;
+      if (path === '/api/pages/storage') return response(storage);
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver); vi.stubGlobal('confirm', vi.fn(() => true));
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete Home' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Splash Revision 2' }));
+    deleted = true;
+    resolveDelete(response({}));
+    await screen.findByText('Page deleted');
+    resolveSplash(response(splash));
+    await waitFor(() => expect(screen.getByText('Splash', { selector: 'h2' })).toBeTruthy());
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/pages/storage', expect.anything());
+  });
+
   it('saves the page then carousel at the refreshed revision before applying', async () => {
     const writes: { path: string; body: any }[] = [];
     let pagesGets = 0;
@@ -118,6 +216,56 @@ describe('admin page persistence', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Créer / mettre à jour Orbit' }));
     await waitFor(() => expect(writes.map(({ path }) => path)).toEqual(['/api/media/presets/orbit', '/api/carousel', '/api/apply']));
     expect(writes[1].body).toMatchObject({ revision: 8, items: [expect.objectContaining({ id: 'home', duration: 15 }), expect.anything()] });
+  });
+
+  it('keeps a newer user selection while Orbit creation is pending', async () => {
+    let resolveOrbit!: (value: ReturnType<typeof response>) => void;
+    const orbit = new Promise<ReturnType<typeof response>>((resolve) => { resolveOrbit = resolve; });
+    const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
+      if (path === '/api/media/presets/orbit') return orbit;
+      if (path === '/api/carousel') return response({ ok: true, revision: 9 });
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Source' }), { target: { value: 'logo' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Créer / mettre à jour Orbit' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/media/presets/orbit', expect.objectContaining({ method: 'POST' })));
+    await fireEvent.click(screen.getByRole('button', { name: /Pages$/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Home Revision 3' }));
+    resolveOrbit(response({ id: 'orbit', name: 'Orbit', source_asset_id: 'logo', settings: { fps: 24, speed_seconds: 4 } }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/apply', expect.objectContaining({ method: 'POST' })));
+    expect(screen.getByText('Home', { selector: 'h2' })).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/pages/splash', expect.anything());
+  });
+
+  it('previews the returned Splash page after a newer selection', async () => {
+    let resolveSplash!: (value: ReturnType<typeof response>) => void;
+    const splashLoad = new Promise<ReturnType<typeof response>>((resolve) => { resolveSplash = resolve; });
+    const previewPages: typeof home[] = [];
+    const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
+      if (path === '/api/media') return response({ assets: [{ id: 'logo', name: 'Logo' }], presets: [{ id: 'orbit', name: 'Orbit', source_asset_id: 'logo', settings: { fps: 24, speed_seconds: 4 } }] });
+      if (path === '/api/pages/splash') return splashLoad;
+      if (path === '/api/preview') {
+        previewPages.push(JSON.parse(String(options.body)).page);
+        return { ok: true, status: 200, blob: async () => new Blob() };
+      }
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Aperçu Orbit' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pages/splash', expect.anything()));
+    await fireEvent.click(screen.getByRole('button', { name: /Pages$/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Home Revision 3' }));
+    resolveSplash(response(splash));
+    await waitFor(() => expect(previewPages).toHaveLength(1));
+    expect(screen.getByText('Home', { selector: 'h2' })).toBeTruthy();
+    expect(previewPages).toEqual([splash]);
   });
 
   it('confirms before restoring a factory page', async () => {
