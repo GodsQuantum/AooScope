@@ -129,4 +129,37 @@ describe('admin page persistence', () => {
     expect(confirm).toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalledWith('/api/pages/home/restore', expect.anything());
   });
+
+  it('preserves carousel drafts while integrating page CRUD responses', async () => {
+    let listed = [summary(home), summary(splash)];
+    const created = { ...home, id: 'new', name: 'New page', revision: 1 };
+    const duplicated = { ...splash, id: 'copy', name: 'Splash copy', revision: 1 };
+    const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
+      const method = options.method ?? 'GET';
+      if (path === '/api/pages' && method === 'GET') return response({ schema_version: 1, revision: 8, carousel: listed.map((item) => item.id), pages: listed });
+      if (path === '/api/pages/new') return response(created);
+      if (path === '/api/pages/copy') return response(duplicated);
+      if (path === '/api/pages/home/restore') return response({ ...home, revision: 9 });
+      if (path === '/api/pages/home' && method === 'DELETE') { listed = [summary(splash), summary(created), summary(duplicated)]; return response({}); }
+      if (path === '/api/pages' && method === 'POST') { listed = [...listed, summary(created)]; return response(created); }
+      if (path === '/api/pages/splash/duplicate') { listed = [...listed, summary(duplicated)]; return response(duplicated); }
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver); vi.stubGlobal('confirm', vi.fn(() => true));
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Move Home down' }));
+    await fireEvent.click(screen.getAllByRole('checkbox', { name: 'Enabled' })[1]);
+    await fireEvent.change(screen.getByRole('spinbutton', { name: 'Duration Home' }), { target: { value: '15' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create page' }));
+    await waitFor(() => expect((screen.getByRole('spinbutton', { name: 'Duration Home' }) as HTMLInputElement).value).toBe('15'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Duplicate Splash' }));
+    await waitFor(() => expect(screen.getByText('Splash copy')).toBeTruthy());
+    await fireEvent.click(screen.getByRole('button', { name: 'Restore Home' }));
+    await waitFor(() => expect((screen.getByRole('spinbutton', { name: 'Duration Home' }) as HTMLInputElement).value).toBe('15'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete Home' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete Home' })).toBeNull());
+    expect((screen.getByRole('spinbutton', { name: 'Duration Splash' }) as HTMLInputElement).value).toBe('8');
+    expect(fetchMock).toHaveBeenCalledWith('/api/pages/home/restore', expect.objectContaining({ method: 'POST' }));
+  });
 });
