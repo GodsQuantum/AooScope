@@ -1,5 +1,9 @@
+use aooscope_render::typography::{
+    HorizontalAlign, TextStyle, VerticalAlign, draw_text, measure_text,
+};
 use aooscope_render::{HEIGHT, WIDTH, compile_document, compile_page};
 use aooscope_types::{Page, PagesDocument, StateDocument};
+use image::{Rgb, RgbImage};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -70,6 +74,107 @@ fn text_and_bound_values_are_rasterized() {
     let empty_frame =
         compile_page(&page("value"), &StateDocument::default(), &media, 100, 0.0).unwrap();
     assert_ne!(empty_frame.image.as_raw(), value_frame.image.as_raw());
+}
+
+#[test]
+fn typography_renders_unicode_with_alignment_ellipsis_and_antialiasing() {
+    let background = Rgb([7, 16, 25]);
+    let mut image = RgbImage::from_pixel(WIDTH, HEIGHT, background);
+    draw_text(
+        &mut image,
+        (20, 20, 300, 56),
+        "Température 42 °C",
+        TextStyle {
+            pixel_size: 24.0,
+            color: Rgb([244, 251, 255]),
+            horizontal_align: HorizontalAlign::Center,
+            vertical_align: VerticalAlign::Center,
+            max_lines: Some(1),
+            ellipsis: true,
+        },
+    );
+    let measured = measure_text(
+        "Température 42 °C",
+        TextStyle {
+            pixel_size: 24.0,
+            ..TextStyle::default()
+        },
+    );
+    assert!(measured.width > 0.0 && measured.height > 0.0);
+    draw_text(
+        &mut image,
+        (400, 20, 300, 56),
+        "right aligned",
+        TextStyle {
+            horizontal_align: HorizontalAlign::Right,
+            ..TextStyle::default()
+        },
+    );
+    let mut ellipsis = RgbImage::from_pixel(WIDTH, HEIGHT, background);
+    let mut clipped = RgbImage::from_pixel(WIDTH, HEIGHT, background);
+    let narrow_bounds = (20, 100, 140, 40);
+    let narrow_style = TextStyle {
+        pixel_size: 24.0,
+        color: Rgb([244, 251, 255]),
+        max_lines: Some(1),
+        ellipsis: true,
+        ..TextStyle::default()
+    };
+    draw_text(
+        &mut ellipsis,
+        narrow_bounds,
+        "Température 42 °C",
+        narrow_style,
+    );
+    draw_text(
+        &mut clipped,
+        narrow_bounds,
+        "Température 42 °C",
+        TextStyle {
+            ellipsis: false,
+            ..narrow_style
+        },
+    );
+    assert_ne!(ellipsis.as_raw(), clipped.as_raw());
+    assert_eq!((image.width(), image.height()), (WIDTH, HEIGHT));
+    assert!(image.pixels().any(|pixel| {
+        pixel != &background && pixel.0.iter().any(|channel| *channel > 7 && *channel < 244)
+    }));
+}
+
+#[test]
+fn compiler_defaults_to_bounded_ellipsis_and_respects_override() {
+    let root = temp_root("text-default-ellipsis");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let long = "A very long media title that cannot fit inside this narrow LCD text box";
+    let mut bounded: Page = serde_json::from_value(json!({
+        "id":"bounded","name":"Bounded","enabled":true,"duration":8,"revision":1,
+        "background":{"color":"#071019"},
+        "layers":[{
+            "id":"title","type":"text","x":20,"y":20,"width":120,"height":28,"z":1,
+            "text":long,"color":"#f4fbff","size":24
+        }]
+    }))
+    .unwrap();
+    let default_frame = compile_page(&bounded, &StateDocument::default(), &media, 100, 0.0)
+        .unwrap()
+        .image;
+    bounded.layers[0]
+        .extra
+        .insert("ellipsis".into(), json!(false));
+    let clipped_frame = compile_page(&bounded, &StateDocument::default(), &media, 100, 0.0)
+        .unwrap()
+        .image;
+    assert_ne!(default_frame.as_raw(), clipped_frame.as_raw());
+
+    bounded.layers[0]
+        .extra
+        .insert("ellipsis".into(), json!(true));
+    bounded.layers[0].extra.insert("max_lines".into(), json!(1));
+    let explicit_frame = compile_page(&bounded, &StateDocument::default(), &media, 100, 0.0)
+        .unwrap()
+        .image;
+    assert_eq!(default_frame.as_raw(), explicit_frame.as_raw());
 }
 
 #[test]

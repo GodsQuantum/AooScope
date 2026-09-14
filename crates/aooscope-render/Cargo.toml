@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 aooscope-config = { path = "../aooscope-config" }
 aooscope-types = { path = "../aooscope-types" }
+damascene-fonts-inter.workspace = true
+fontdue.workspace = true
 image.workspace = true
 serde.workspace = true
 serde_json.workspace = true

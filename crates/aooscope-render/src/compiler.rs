@@ -1,3 +1,4 @@
+use crate::typography::{HorizontalAlign, TextStyle, VerticalAlign};
 use crate::{MediaStore, geometry};
 use aooscope_types::{Layer, Page, PagesDocument, StateDocument};
 use image::{Rgb, RgbImage, imageops};
@@ -298,7 +299,7 @@ pub fn compile_page(
                 if let Some(unit) = layer.extra.get("unit").and_then(Value::as_str) {
                     text.push_str(unit);
                 }
-                draw_text(&mut image, layer, &text, c);
+                draw_layer_text(&mut image, layer, &text, c);
             }
             other => warnings.push(format!("{}: unsupported layer type {}", layer.id, other)),
         }
@@ -390,7 +391,7 @@ fn draw_badge(
             )
         });
     if !text.is_empty() {
-        draw_text(image, layer, &text, color);
+        draw_layer_text(image, layer, &text, color);
     }
 }
 
@@ -466,7 +467,7 @@ fn gcd(a: u32, b: u32) -> u32 {
     if b == 0 { a } else { gcd(b, a % b) }
 }
 
-fn draw_text(image: &mut RgbImage, layer: &Layer, text: &str, color: Rgb<u8>) {
+fn draw_layer_text(image: &mut RgbImage, layer: &Layer, text: &str, color: Rgb<u8>) {
     let scale = layer
         .extra
         .get("scale")
@@ -474,88 +475,47 @@ fn draw_text(image: &mut RgbImage, layer: &Layer, text: &str, color: Rgb<u8>) {
         .map(|value| value as u32)
         .unwrap_or_else(|| (layer.height / 8).clamp(1, 8))
         .clamp(1, 12);
-    let max_chars = (layer.width / (6 * scale)).max(1) as usize;
-    for (row, line) in text
-        .as_bytes()
-        .chunks(max_chars)
-        .take((layer.height / (8 * scale)).max(1) as usize)
-        .enumerate()
-    {
-        let line_width = line.len() as u32 * 6 * scale;
-        let offset_x = match layer.extra.get("align").and_then(Value::as_str) {
-            Some("center") => layer.width.saturating_sub(line_width) / 2,
-            Some("right") => layer.width.saturating_sub(line_width),
-            _ => 0,
-        };
-        let offset_y = if layer.extra.get("valign").and_then(Value::as_str) == Some("center") {
-            layer.height.saturating_sub(7 * scale) / 2
-        } else {
-            0
-        };
-        for (column, byte) in line.iter().enumerate() {
-            for (gy, bits) in glyph(*byte).iter().enumerate() {
-                for gx in 0..5 {
-                    if bits & (1 << (4 - gx)) != 0 {
-                        rect(
-                            image,
-                            layer.x + offset_x as i32 + ((column * 6 + gx) as u32 * scale) as i32,
-                            layer.y + offset_y as i32 + ((row * 8 + gy) as u32 * scale) as i32,
-                            scale,
-                            scale,
-                            color,
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn glyph(c: u8) -> [u8; 7] {
-    match c.to_ascii_uppercase() {
-        b'0' => [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
-        b'1' => [0x04, 0x0c, 0x14, 0x04, 0x04, 0x04, 0x1f],
-        b'2' => [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
-        b'3' => [0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e],
-        b'4' => [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
-        b'5' => [0x1f, 0x10, 0x10, 0x1e, 0x01, 0x01, 0x1e],
-        b'6' => [0x0e, 0x10, 0x10, 0x1e, 0x11, 0x11, 0x0e],
-        b'7' => [0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
-        b'8' => [0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e],
-        b'9' => [0x0e, 0x11, 0x11, 0x0f, 0x01, 0x01, 0x0e],
-        b'A' => [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-        b'B' => [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
-        b'C' => [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
-        b'D' => [0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e],
-        b'E' => [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
-        b'F' => [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
-        b'G' => [0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f],
-        b'H' => [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-        b'I' => [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x1f],
-        b'J' => [0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0c],
-        b'K' => [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
-        b'L' => [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
-        b'M' => [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
-        b'N' => [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
-        b'O' => [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-        b'P' => [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
-        b'Q' => [0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d],
-        b'R' => [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
-        b'S' => [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
-        b'T' => [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-        b'U' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-        b'V' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04],
-        b'W' => [0x11, 0x11, 0x11, 0x15, 0x15, 0x1b, 0x11],
-        b'X' => [0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11],
-        b'Y' => [0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04],
-        b'Z' => [0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f],
-        b'-' => [0, 0, 0, 0x1f, 0, 0, 0],
-        b'%' => [0x19, 0x19, 0x02, 0x04, 0x08, 0x13, 0x13],
-        b'.' => [0, 0, 0, 0, 0, 0x0c, 0x0c],
-        b':' => [0, 0x0c, 0x0c, 0, 0x0c, 0x0c, 0],
-        b'/' => [0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10],
-        b'+' => [0, 0x04, 0x04, 0x1f, 0x04, 0x04, 0],
-        b' ' => [0; 7],
-        _ => [0x1f, 0x11, 0x15, 0x11, 0x15, 0x11, 0x1f],
-    }
+    let pixel_size = layer
+        .extra
+        .get("size")
+        .and_then(Value::as_f64)
+        .map(|value| value as f32)
+        .unwrap_or(scale as f32 * 8.0);
+    let horizontal_align = match layer.extra.get("align").and_then(Value::as_str) {
+        Some("center") => HorizontalAlign::Center,
+        Some("right") => HorizontalAlign::Right,
+        _ => HorizontalAlign::Left,
+    };
+    let vertical_align = match layer.extra.get("valign").and_then(Value::as_str) {
+        Some("center") => VerticalAlign::Center,
+        Some("bottom") => VerticalAlign::Bottom,
+        _ => VerticalAlign::Top,
+    };
+    crate::typography::draw_text(
+        image,
+        (layer.x, layer.y, layer.width, layer.height),
+        text,
+        TextStyle {
+            pixel_size,
+            color,
+            horizontal_align,
+            vertical_align,
+            max_lines: Some(
+                layer
+                    .extra
+                    .get("max_lines")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as usize)
+                    .unwrap_or_else(|| {
+                        let line_height = (pixel_size * 1.2).ceil().max(1.0);
+                        ((layer.height as f32 / line_height).floor() as usize).max(1)
+                    }),
+            ),
+            ellipsis: layer
+                .extra
+                .get("ellipsis")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        },
+    );
 }
