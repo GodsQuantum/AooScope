@@ -1,5 +1,5 @@
 use aooscope_config::atomic_write_json;
-use aooscope_types::{MediaAsset, MediaDocument, MediaPreset, PagesDocument};
+use aooscope_types::{Layer, MediaAsset, MediaDocument, MediaPreset, PagesDocument};
 use image::{ImageFormat, ImageReader};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -118,27 +118,56 @@ impl MediaStore {
     }
 
     pub fn migrate_splash(pages: &mut PagesDocument, preset: &MediaPreset) -> bool {
-        let Some(page) = pages.pages.values_mut().find(|page| page.name == "Splash") else {
+        let Some(page) = pages
+            .pages
+            .values_mut()
+            .find(|page| page.template_id.as_deref() == Some("factory.splash.v1"))
+        else {
             return false;
         };
-        if page
+        if let Some(layer) = page
             .layers
-            .iter()
-            .any(|layer| layer.layer_type == "animation")
+            .iter_mut()
+            .find(|layer| layer.id == "splash-orbit")
         {
-            return false;
-        }
-        let Some(layer) = page.layers.iter_mut().find(|layer| {
-            layer.layer_type == "image"
+            let unchanged = layer.layer_type == "animation"
                 && layer.extra.get("asset_id").and_then(Value::as_str)
                     == Some(preset.source_asset_id.as_str())
-        }) else {
-            return false;
-        };
-        layer.layer_type = "animation".into();
-        layer
-            .extra
-            .insert("preset_id".into(), Value::from(preset.id.as_str()));
+                && layer.extra.get("preset_id").and_then(Value::as_str) == Some(preset.id.as_str());
+            if unchanged {
+                return false;
+            }
+            layer.layer_type = "animation".into();
+            layer.extra.insert(
+                "asset_id".into(),
+                Value::from(preset.source_asset_id.as_str()),
+            );
+            layer
+                .extra
+                .insert("preset_id".into(), Value::from(preset.id.as_str()));
+        } else {
+            page.layers.push(Layer {
+                id: "splash-orbit".into(),
+                layer_type: "animation".into(),
+                binding: None,
+                x: 343,
+                y: 38,
+                width: 274,
+                height: 274,
+                z: 3,
+                opacity: 1.0,
+                clip: false,
+                extra: [
+                    (
+                        "asset_id".into(),
+                        Value::from(preset.source_asset_id.as_str()),
+                    ),
+                    ("preset_id".into(), Value::from(preset.id.as_str())),
+                ]
+                .into_iter()
+                .collect(),
+            });
+        }
         page.revision += 1;
         true
     }
