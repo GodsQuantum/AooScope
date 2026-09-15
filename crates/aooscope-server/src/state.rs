@@ -598,15 +598,42 @@ mod tests {
     }
 
     #[test]
-    fn orbit_frames_advance_by_layer_speed_while_static_frames_do_not() {
+    fn animated_assets_advance_by_layer_speed_while_static_pages_do_not() {
+        use image::{Delay, Frame, Rgba, RgbaImage, codecs::gif::GifEncoder};
+
         let (paths, root) = fixture("animation");
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = GifEncoder::new(&mut bytes);
+            encoder
+                .encode_frames([
+                    Frame::from_parts(
+                        RgbaImage::from_pixel(2, 2, Rgba([220, 20, 20, 255])),
+                        0,
+                        0,
+                        Delay::from_numer_denom_ms(100, 1),
+                    ),
+                    Frame::from_parts(
+                        RgbaImage::from_pixel(2, 2, Rgba([20, 220, 20, 255])),
+                        0,
+                        0,
+                        Delay::from_numer_denom_ms(100, 1),
+                    ),
+                ])
+                .unwrap();
+        }
+        let asset = MediaStore::new(&root)
+            .unwrap()
+            .ingest(&bytes, "pulse.gif")
+            .unwrap();
         let animation = json!({
             "schema_version": 1, "revision": 1, "carousel": ["home"],
             "pages": {"home": {
                 "id": "home", "name": "Home", "enabled": true, "duration": 8,
                 "revision": 1, "background": {"color": "#071019"}, "layers": [{
-                    "id": "orbit", "type": "animation", "x": 400, "y": 100,
-                    "width": 100, "height": 100, "z": 1, "speed_seconds": 2
+                    "id": "splash", "type": "animation", "asset_id": asset.id,
+                    "x": 400, "y": 100, "width": 100, "height": 100, "z": 1,
+                    "speed_seconds": 2
                 }]
             }}
         });
