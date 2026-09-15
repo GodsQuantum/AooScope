@@ -123,7 +123,36 @@ fn value_text(state: &StateDocument, binding: Option<&str>, fallback: &str) -> S
     }
 }
 
+fn format_bytes(value: f64, fallback: &str) -> String {
+    if value >= 1_000_000_000_000.0 {
+        format!("{:.1} TB", value / 1_000_000_000_000.0)
+    } else if value >= 1_000_000_000.0 {
+        let gigabytes = value / 1_000_000_000.0;
+        if gigabytes >= 100.0 {
+            format!("{gigabytes:.0} GB")
+        } else {
+            format!("{gigabytes:.1} GB")
+        }
+    } else if value >= 1_000_000.0 {
+        let megabytes = value / 1_000_000.0;
+        if megabytes >= 100.0 {
+            format!("{megabytes:.0} MB")
+        } else {
+            format!("{megabytes:.1} MB")
+        }
+    } else if value >= 1_000.0 {
+        format!("{:.0} KB", value / 1_000.0)
+    } else if value > 0.0 {
+        format!("{value:.0} B")
+    } else {
+        fallback.to_owned()
+    }
+}
+
 fn layer_value_text(state: &StateDocument, layer: &Layer, fallback: &str) -> String {
+    if layer.extra.get("format").and_then(Value::as_str) == Some("bytes") {
+        return format_bytes(number(state, layer.binding.as_deref()), fallback);
+    }
     if layer.extra.get("format").and_then(Value::as_str) == Some("bytes_per_second") {
         let value = number(state, layer.binding.as_deref());
         return if value >= 1_000_000_000.0 {
@@ -518,4 +547,17 @@ fn draw_layer_text(image: &mut RgbImage, layer: &Layer, text: &str, color: Rgb<u
                 .unwrap_or(true),
         },
     );
+}
+
+#[cfg(test)]
+mod formatting_tests {
+    use super::format_bytes;
+
+    #[test]
+    fn bytes_are_human_readable_for_storage_cards() {
+        assert_eq!(format_bytes(4_080_000_000_000.0, "--"), "4.1 TB");
+        assert_eq!(format_bytes(6_000_000_000_000.0, "--"), "6.0 TB");
+        assert_eq!(format_bytes(512_000_000_000.0, "--"), "512 GB");
+        assert_eq!(format_bytes(0.0, "--"), "--");
+    }
 }
