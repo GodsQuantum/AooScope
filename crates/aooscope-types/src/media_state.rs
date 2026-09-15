@@ -24,7 +24,11 @@ pub struct MediaDisplayEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poster_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster_asset_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_minutes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eta_minutes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

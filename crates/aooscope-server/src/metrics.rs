@@ -1,6 +1,8 @@
 use aooscope_types::{MetricDescriptor, ProviderDescriptor, StateDocument, WidgetKind};
 use serde_json::{Value, json};
 
+use crate::storage::inventory;
+
 #[derive(Clone, Copy)]
 struct MetricDef {
     id: &'static str,
@@ -221,6 +223,20 @@ const MEDIA: &[MetricDef] = &[
         widgets: VALUE_ONLY,
     },
     MetricDef {
+        id: "aooscope_media_display_remaining_minutes",
+        pointer: "/media/display/remaining_minutes",
+        label: "Temps de lecture restant",
+        provider_id: "media",
+        provider_name: "Media agrégé",
+        category: "Lecture",
+        value_type: "number",
+        unit: "min",
+        min: Some(0.0),
+        max: None,
+        demo: Some(demo_8),
+        widgets: VALUE_ONLY,
+    },
+    MetricDef {
         id: "aooscope_media_display_speed_bytes_s",
         pointer: "/media/display/speed_bytes_s",
         label: "Débit de téléchargement",
@@ -267,20 +283,27 @@ pub fn metric_catalog(state: &StateDocument) -> Vec<MetricDescriptor> {
                 recommended_widgets: def.widgets.to_vec(),
             }
         })
-        .chain(storage_metrics(&doc))
+        .chain(storage_metrics(state))
         .collect()
 }
 
-fn storage_metrics(doc: &Value) -> impl Iterator<Item = MetricDescriptor> + '_ {
-    (0..6).flat_map(move |index| {
+fn storage_metrics(state: &StateDocument) -> impl Iterator<Item = MetricDescriptor> {
+    inventory(state).into_iter().flat_map(|device| {
+        let index = device.index;
         let temp_id = format!("aooscope_pve_smart_{index}_temperature_c");
         let health_id = format!("aooscope_pve_smart_{index}_health");
         let name_id = format!("aooscope_pve_disks_{index}_name");
-        let name = doc.pointer(&format!("/pve/disks/{index}/name")).cloned();
-        let temp = doc
-            .pointer(&format!("/pve/smart/{index}/temperature_c"))
-            .cloned();
-        let health = doc.pointer(&format!("/pve/smart/{index}/health")).cloned();
+        let size_id = format!("aooscope_pve_disks_{index}_size_bytes");
+        let used_id = format!("aooscope_pve_disks_{index}_used_bytes");
+        let free_id = format!("aooscope_pve_disks_{index}_free_bytes");
+        let usage_id = format!("aooscope_pve_disks_{index}_usage_pct");
+        let name = Some(json!(device.label));
+        let size = Some(json!(device.total_bytes));
+        let used = device.used_bytes.map(|value| json!(value));
+        let free = device.free_bytes.map(|value| json!(value));
+        let usage = device.usage_pct.map(|value| json!(value));
+        let temp = device.temperature_c.map(|value| json!(value));
+        let health = device.health.map(|value| json!(value));
         [
             MetricDescriptor {
                 id: name_id,
@@ -296,6 +319,66 @@ fn storage_metrics(doc: &Value) -> impl Iterator<Item = MetricDescriptor> + '_ {
                 value: name,
                 demo_value: Some(json!(format!("Disk {}", index + 1))),
                 recommended_widgets: TEXT.to_vec(),
+            },
+            MetricDescriptor {
+                id: size_id,
+                label: format!("Disque {} · taille", index + 1),
+                provider_id: "proxmox".into(),
+                provider_name: "Proxmox".into(),
+                category: "Stockage".into(),
+                value_type: "number".into(),
+                unit: "B".into(),
+                min: Some(0.0),
+                max: None,
+                online: true,
+                value: size,
+                demo_value: Some(json!(1_000_000_000_000_u64)),
+                recommended_widgets: NUMERIC.to_vec(),
+            },
+            MetricDescriptor {
+                id: used_id,
+                label: format!("Disque {} · utilisé", index + 1),
+                provider_id: "proxmox".into(),
+                provider_name: "Proxmox".into(),
+                category: "Stockage".into(),
+                value_type: "number".into(),
+                unit: "B".into(),
+                min: Some(0.0),
+                max: None,
+                online: used.is_some(),
+                value: used,
+                demo_value: Some(json!(600_000_000_000_u64)),
+                recommended_widgets: NUMERIC.to_vec(),
+            },
+            MetricDescriptor {
+                id: free_id,
+                label: format!("Disque {} · libre", index + 1),
+                provider_id: "proxmox".into(),
+                provider_name: "Proxmox".into(),
+                category: "Stockage".into(),
+                value_type: "number".into(),
+                unit: "B".into(),
+                min: Some(0.0),
+                max: None,
+                online: free.is_some(),
+                value: free,
+                demo_value: Some(json!(400_000_000_000_u64)),
+                recommended_widgets: NUMERIC.to_vec(),
+            },
+            MetricDescriptor {
+                id: usage_id,
+                label: format!("Disque {} · utilisation", index + 1),
+                provider_id: "proxmox".into(),
+                provider_name: "Proxmox".into(),
+                category: "Stockage".into(),
+                value_type: "number".into(),
+                unit: "%".into(),
+                min: Some(0.0),
+                max: Some(100.0),
+                online: usage.is_some(),
+                value: usage,
+                demo_value: Some(json!(60.0)),
+                recommended_widgets: NUMERIC.to_vec(),
             },
             MetricDescriptor {
                 id: temp_id,
