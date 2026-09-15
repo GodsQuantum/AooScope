@@ -36,6 +36,10 @@ pub fn bootstrap(paths: &AppPaths) -> Result<(), ConfigError> {
         let mut page = templates::factory_page("factory.storage.v1", "page-storage")
             .expect("known factory page");
         page.enabled = false;
+        page.extra.insert(
+            templates::STORAGE_GENERATED_KEY.into(),
+            serde_json::json!(true),
+        );
         storage_pages.push(page);
     }
     let storage_ids = storage_pages

@@ -35,6 +35,10 @@ pub fn app(state: AppState) -> Router {
             get(routes::pages::get_pages).post(routes::designer::create_page),
         )
         .route(
+            "/api/pages/storage/regenerate",
+            post(routes::designer::regenerate_storage_pages),
+        )
+        .route(
             "/api/pages/{id}",
             get(routes::designer::get_page)
                 .put(routes::designer::update_page)

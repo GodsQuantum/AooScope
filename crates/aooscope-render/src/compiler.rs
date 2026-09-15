@@ -1,7 +1,7 @@
 use crate::typography::{HorizontalAlign, TextStyle, VerticalAlign};
 use crate::{MediaStore, geometry};
 use aooscope_types::{Layer, Page, PagesDocument, StateDocument};
-use image::{AnimationDecoder, Rgb, RgbImage, codecs::gif::GifDecoder, imageops};
+use image::{AnimationDecoder, Rgb, RgbImage, RgbaImage, codecs::gif::GifDecoder, imageops};
 use serde_json::Value;
 use std::{
     fs::File,
@@ -248,10 +248,26 @@ pub fn compile_page(
         );
         let value = progress(state, layer);
         match layer.layer_type.as_str() {
-            "image" => draw_asset(&mut image, layer, state, media, &mut warnings),
+            "image" => draw_asset(
+                &mut image,
+                layer,
+                state,
+                media,
+                brightness.min(100) as f64 / 100.0,
+                layer.opacity,
+                &mut warnings,
+            ),
             "animation" => {
                 if let Some(id) = layer.extra.get("asset_id").and_then(Value::as_str) {
-                    draw_animation_asset(&mut image, layer, media, id, phase, &mut warnings);
+                    draw_animation_asset(
+                        &mut image,
+                        layer,
+                        media,
+                        id,
+                        phase,
+                        (brightness.min(100) as f64 / 100.0, layer.opacity),
+                        &mut warnings,
+                    );
                 } else {
                     warnings.push(format!("{}: animation asset unavailable", layer.id));
                 }
@@ -368,6 +384,8 @@ fn draw_asset(
     layer: &Layer,
     state: &StateDocument,
     media: &MediaStore,
+    luminance: f64,
+    opacity: f64,
     warnings: &mut Vec<String>,
 ) {
     let bound = binding_value(state, layer.binding.as_deref());
@@ -377,7 +395,7 @@ fn draw_asset(
         .and_then(Value::as_str)
         .or_else(|| bound.as_str())
     {
-        draw_asset_id(image, layer, media, id, warnings)
+        draw_asset_id(image, layer, media, id, luminance, opacity, warnings)
     } else if layer.extra.get("optional").and_then(Value::as_bool) != Some(true) {
         warnings.push(format!("{}: media unavailable", layer.id));
     }
@@ -468,7 +486,7 @@ struct AnimationCache {
     len: u64,
     width: u32,
     height: u32,
-    frames: Vec<RgbImage>,
+    frames: Vec<RgbaImage>,
 }
 
 static ANIMATION_CACHE: OnceLock<Mutex<Option<AnimationCache>>> = OnceLock::new();
@@ -479,6 +497,7 @@ fn draw_animation_asset(
     media: &MediaStore,
     id: &str,
     phase: f64,
+    (luminance, opacity): (f64, f64),
     warnings: &mut Vec<String>,
 ) {
     let result = media.resolve(id).and_then(|path| {
@@ -486,12 +505,12 @@ fn draw_animation_asset(
             .map_err(|error| crate::MediaError::Image(error.to_string()))
     });
     match result {
-        Ok(frame) => imageops::overlay(image, &frame, layer.x as i64, layer.y as i64),
+        Ok(frame) => composite_rgba(image, &frame, layer.x, layer.y, luminance, opacity),
         Err(error) => warnings.push(format!("{}: media unavailable: {}", layer.id, error)),
     }
 }
 
-fn animation_frame(path: &Path, width: u32, height: u32, phase: f64) -> Result<RgbImage, String> {
+fn animation_frame(path: &Path, width: u32, height: u32, phase: f64) -> Result<RgbaImage, String> {
     let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
     let modified = metadata.modified().ok();
     let cache = ANIMATION_CACHE.get_or_init(|| Mutex::new(None));
@@ -536,7 +555,7 @@ fn animation_index(phase: f64, frames: usize) -> usize {
     ((normalized * frames as f64).floor() as usize).min(frames - 1)
 }
 
-fn decode_animation_frames(path: &Path, width: u32, height: u32) -> Result<Vec<RgbImage>, String> {
+fn decode_animation_frames(path: &Path, width: u32, height: u32) -> Result<Vec<RgbaImage>, String> {
     if path
         .extension()
         .and_then(|value| value.to_str())
@@ -556,12 +575,12 @@ fn decode_animation_frames(path: &Path, width: u32, height: u32) -> Result<Vec<R
                 height,
                 imageops::FilterType::Lanczos3,
             );
-            let rgb = image::DynamicImage::ImageRgba8(resized).to_rgb8();
-            pixels = pixels.saturating_add(u64::from(rgb.width()) * u64::from(rgb.height()));
+            pixels =
+                pixels.saturating_add(u64::from(resized.width()) * u64::from(resized.height()));
             if pixels > MAX_ANIMATION_PIXELS && !frames.is_empty() {
                 break;
             }
-            frames.push(rgb);
+            frames.push(resized);
         }
         if !frames.is_empty() {
             return Ok(frames);
@@ -569,7 +588,7 @@ fn decode_animation_frames(path: &Path, width: u32, height: u32) -> Result<Vec<R
     }
     let source = image::open(path)
         .map_err(|error| error.to_string())?
-        .to_rgb8();
+        .to_rgba8();
     Ok(vec![imageops::resize(
         &source,
         width,
@@ -583,6 +602,8 @@ fn draw_asset_id(
     layer: &Layer,
     media: &MediaStore,
     id: &str,
+    luminance: f64,
+    opacity: f64,
     warnings: &mut Vec<String>,
 ) {
     match media
@@ -590,16 +611,45 @@ fn draw_asset_id(
         .and_then(|p| image::open(p).map_err(|e| crate::MediaError::Image(e.to_string())))
     {
         Ok(source) => {
-            let source = source.to_rgb8();
+            let source = source.to_rgba8();
             let fitted = imageops::resize(
                 &source,
                 layer.width,
                 layer.height,
                 imageops::FilterType::Lanczos3,
             );
-            imageops::overlay(image, &fitted, layer.x as i64, layer.y as i64);
+            composite_rgba(image, &fitted, layer.x, layer.y, luminance, opacity);
         }
         Err(e) => warnings.push(format!("{}: media unavailable: {}", layer.id, e)),
+    }
+}
+
+fn composite_rgba(
+    image: &mut RgbImage,
+    source: &RgbaImage,
+    x: i32,
+    y: i32,
+    luminance: f64,
+    opacity: f64,
+) {
+    let luminance = luminance.clamp(0.0, 1.0);
+    let opacity = opacity.clamp(0.0, 1.0);
+    for (source_x, source_y, pixel) in source.enumerate_pixels() {
+        let target_x = x + source_x as i32;
+        let target_y = y + source_y as i32;
+        if target_x < 0 || target_y < 0 || target_x >= WIDTH as i32 || target_y >= HEIGHT as i32 {
+            continue;
+        }
+        let alpha = pixel[3] as f64 / 255.0 * opacity;
+        if alpha == 0.0 {
+            continue;
+        }
+        let target = image.get_pixel_mut(target_x as u32, target_y as u32);
+        for channel in 0..3 {
+            target[channel] = ((pixel[channel] as f64 * luminance * alpha)
+                + (target[channel] as f64 * (1.0 - alpha)))
+                .round() as u8;
+        }
     }
 }
 

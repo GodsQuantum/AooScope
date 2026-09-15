@@ -37,6 +37,13 @@ describe('Canvas', () => {
     expect(screen.queryByText(metric.id)).toBeNull();
   });
 
+  it('uses the current metric value for bar preview fill', () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+    const metric = { id: 'metric', label: 'Usage', provider_name: 'Test', category: 'Test', value: 42, demo_value: 68, unit: '%', recommended_widgets: ['bar'] };
+    render(Canvas, { props: { layers: [{ id: 'bar', type: 'bar', binding: metric.id, x: 0, y: 0, width: 100, height: 10 }], metrics: [metric], onselect: vi.fn(), onchange: vi.fn() } });
+    expect((document.querySelector('[data-layer="bar"]') as HTMLElement).style.getPropertyValue('--fill')).toBe('42%');
+  });
+
   it('previews renderer-backed orientation, thickness, alignment and radius', () => {
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
     render(Canvas, { props: {

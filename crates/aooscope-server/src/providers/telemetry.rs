@@ -4,6 +4,22 @@ use aooscope_types::{ProviderSecrets, Settings, StateDocument};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
+fn storage_sort_key(disk: &Value) -> (String, String) {
+    (
+        disk.get("path")
+            .or_else(|| disk.get("devpath"))
+            .or_else(|| disk.get("id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        disk.get("name")
+            .or_else(|| disk.get("model"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    )
+}
+
 pub fn normalize_proxmox(value: &Value) -> Value {
     let status = value.get("status").unwrap_or(value);
     let memory = status.get("memory").unwrap_or(&Value::Null);
@@ -24,6 +40,12 @@ pub fn normalize_proxmox(value: &Value) -> Value {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let mut storage = disks
+        .into_iter()
+        .enumerate()
+        .map(|(index, disk)| (disk, smart.get(index).cloned().unwrap_or(Value::Null)))
+        .collect::<Vec<_>>();
+    storage.sort_by_key(|(disk, _)| storage_sort_key(disk));
     json!({
         "cpu_pct": status.get("cpu").and_then(Value::as_f64).map(|v| v * 100.0),
         "memory_pct": (total > 0.0).then(|| used * 100.0 / total),
@@ -31,7 +53,7 @@ pub fn normalize_proxmox(value: &Value) -> Value {
         "memory_total_bytes": total,
         "guests_running": guests.iter().filter(|guest| guest.get("status").and_then(Value::as_str) == Some("running")).count(),
         "guests_total": guests.len(),
-        "disks": disks.iter().map(|disk| {
+        "disks": storage.iter().map(|(disk, _)| {
             let size_value = disk.get("size").cloned().unwrap_or(Value::Null);
             let used_value = disk.get("used").cloned().unwrap_or(Value::Null);
             let avail_value = disk.get("avail").cloned().unwrap_or_else(|| {
@@ -50,8 +72,16 @@ pub fn normalize_proxmox(value: &Value) -> Value {
                 })
             });
             json!({
-                "name": disk.get("model").or_else(|| disk.get("devpath")).cloned().unwrap_or(Value::Null),
-                "path": disk.get("devpath"),
+                "name": disk
+                    .get("name")
+                    .or_else(|| disk.get("model"))
+                    .or_else(|| disk.get("devpath"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                "path": disk
+                    .get("path")
+                    .or_else(|| disk.get("devpath"))
+                    .or_else(|| disk.get("id")),
                 "health": disk.get("health"),
                 "size": size_value,
                 "size_bytes": size_value,
@@ -63,7 +93,7 @@ pub fn normalize_proxmox(value: &Value) -> Value {
                 "usage_pct": usage_pct
             })
         }).collect::<Vec<_>>(),
-        "smart": smart.iter().map(|disk| json!({
+        "smart": storage.iter().map(|(_, disk)| json!({
             "health": disk.get("health"),
             "temperature_c": disk.get("temperature").or_else(|| disk.get("temperature_c"))
         })).collect::<Vec<_>>()
@@ -269,9 +299,9 @@ async fn collect_proxmox(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let mut smart = Vec::new();
+    let mut smart = Vec::with_capacity(disk_data.len());
     for disk in &disk_data {
-        if let Some(devpath) = disk.get("devpath").and_then(Value::as_str)
+        let value = if let Some(devpath) = disk.get("devpath").and_then(Value::as_str)
             && let Ok(value) = client
                 .get_json(
                     &config.url,
@@ -280,8 +310,11 @@ async fn collect_proxmox(
                 )
                 .await
         {
-            smart.push(value.get("data").cloned().unwrap_or(value));
-        }
+            value.get("data").cloned().unwrap_or(value)
+        } else {
+            Value::Null
+        };
+        smart.push(value);
     }
     Ok(normalize_proxmox(
         &json!({"status": status.get("data").cloned().unwrap_or(status), "guests": guests, "disks": disk_data, "smart": smart}),
@@ -534,6 +567,57 @@ mod tests {
         assert_eq!(value["disks"][0]["size_bytes"], 1_000);
         assert_eq!(value["disks"][0]["used_bytes"], 250);
         assert_eq!(value["disks"][0]["free_bytes"], 750);
+    }
+
+    #[test]
+    fn proxmox_normalization_preserves_smart_slots_when_a_request_failed() {
+        let value = normalize_proxmox(&json!({
+            "disks": [
+                {"devpath":"/dev/sda"},
+                {"devpath":"/dev/sdb"},
+                {"devpath":"/dev/sdc"}
+            ],
+            "smart": [
+                {"health":"PASSED","temperature":31},
+                null,
+                {"health":"PASSED","temperature":33}
+            ]
+        }));
+        assert_eq!(value["smart"].as_array().unwrap().len(), 3);
+        assert_eq!(value["smart"][0]["temperature_c"], 31);
+        assert!(value["smart"][1]["health"].is_null());
+        assert_eq!(value["smart"][2]["temperature_c"], 33);
+    }
+
+    #[test]
+    fn proxmox_normalization_sorts_disks_and_smart_as_pairs() {
+        let value = normalize_proxmox(&json!({
+            "disks": [
+                {"devpath":"/dev/sdb", "model":"B"},
+                {"devpath":"/dev/sda", "model":"A"}
+            ],
+            "smart": [
+                {"health":"B-HEALTH", "temperature":42},
+                {"health":"A-HEALTH", "temperature":24}
+            ]
+        }));
+
+        assert_eq!(value["disks"][0]["name"], "A");
+        assert_eq!(value["disks"][1]["name"], "B");
+        assert_eq!(value["smart"][0]["health"], "A-HEALTH");
+        assert_eq!(value["smart"][1]["health"], "B-HEALTH");
+    }
+
+    #[test]
+    fn proxmox_normalization_keeps_a_null_smart_slot_for_missing_result() {
+        let value = normalize_proxmox(&json!({
+            "disks": [{"devpath":"/dev/sda"}, {"devpath":"/dev/sdb"}],
+            "smart": [{"health":"A-HEALTH"}]
+        }));
+
+        assert_eq!(value["smart"].as_array().unwrap().len(), 2);
+        assert_eq!(value["smart"][0]["health"], "A-HEALTH");
+        assert!(value["smart"][1]["health"].is_null());
     }
 
     #[test]
