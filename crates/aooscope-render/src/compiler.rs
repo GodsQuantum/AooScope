@@ -1,8 +1,15 @@
 use crate::typography::{HorizontalAlign, TextStyle, VerticalAlign};
 use crate::{MediaStore, geometry};
 use aooscope_types::{Layer, Page, PagesDocument, StateDocument};
-use image::{Rgb, RgbImage, imageops};
+use image::{AnimationDecoder, Rgb, RgbImage, codecs::gif::GifDecoder, imageops};
 use serde_json::Value;
+use std::{
+    fs::File,
+    io::BufReader,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::SystemTime,
+};
 use thiserror::Error;
 
 pub const WIDTH: u32 = 960;
@@ -244,20 +251,10 @@ pub fn compile_page(
             "image" => draw_asset(&mut image, layer, state, media, &mut warnings),
             "animation" => {
                 if let Some(id) = layer.extra.get("asset_id").and_then(Value::as_str) {
-                    draw_asset_id(&mut image, layer, media, id, &mut warnings);
+                    draw_animation_asset(&mut image, layer, media, id, phase, &mut warnings);
+                } else {
+                    warnings.push(format!("{}: animation asset unavailable", layer.id));
                 }
-                let cx = layer.x.max(0) as u32 + layer.width / 2;
-                let cy = layer.y.max(0) as u32 + layer.height / 2;
-                let a = (phase / 100.0 * std::f64::consts::TAU).cos();
-                let b = (phase / 100.0 * std::f64::consts::TAU).sin();
-                rect(
-                    &mut image,
-                    (cx as f64 + a * (layer.width as f64 / 2.5) - 4.0) as i32,
-                    (cy as f64 + b * (layer.height as f64 / 2.5) - 4.0) as i32,
-                    8,
-                    8,
-                    c,
-                );
             }
             "bar" | "gauge" | "ring" => {
                 let track = opacity(
@@ -461,6 +458,126 @@ fn color_value(layer: &Layer, key: &str, fallback: Rgb<u8>) -> Rgb<u8> {
 fn crate_color(value: &str) -> Rgb<u8> {
     color(Some(value), Rgb([53, 217, 255]))
 }
+const MAX_ANIMATION_FRAMES: usize = 120;
+const MAX_ANIMATION_PIXELS: u64 = 24_000_000;
+
+#[derive(Clone)]
+struct AnimationCache {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    len: u64,
+    width: u32,
+    height: u32,
+    frames: Vec<RgbImage>,
+}
+
+static ANIMATION_CACHE: OnceLock<Mutex<Option<AnimationCache>>> = OnceLock::new();
+
+fn draw_animation_asset(
+    image: &mut RgbImage,
+    layer: &Layer,
+    media: &MediaStore,
+    id: &str,
+    phase: f64,
+    warnings: &mut Vec<String>,
+) {
+    let result = media.resolve(id).and_then(|path| {
+        animation_frame(&path, layer.width, layer.height, phase)
+            .map_err(|error| crate::MediaError::Image(error.to_string()))
+    });
+    match result {
+        Ok(frame) => imageops::overlay(image, &frame, layer.x as i64, layer.y as i64),
+        Err(error) => warnings.push(format!("{}: media unavailable: {}", layer.id, error)),
+    }
+}
+
+fn animation_frame(path: &Path, width: u32, height: u32, phase: f64) -> Result<RgbImage, String> {
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    let modified = metadata.modified().ok();
+    let cache = ANIMATION_CACHE.get_or_init(|| Mutex::new(None));
+    {
+        let guard = cache
+            .lock()
+            .map_err(|_| "animation cache poisoned".to_owned())?;
+        if let Some(hit) = guard.as_ref().filter(|entry| {
+            entry.path == path
+                && entry.modified == modified
+                && entry.len == metadata.len()
+                && entry.width == width
+                && entry.height == height
+        }) {
+            let index = animation_index(phase, hit.frames.len());
+            return Ok(hit.frames[index].clone());
+        }
+    }
+
+    let frames = decode_animation_frames(path, width, height)?;
+    let index = animation_index(phase, frames.len());
+    let selected = frames[index].clone();
+    let mut guard = cache
+        .lock()
+        .map_err(|_| "animation cache poisoned".to_owned())?;
+    *guard = Some(AnimationCache {
+        path: path.to_path_buf(),
+        modified,
+        len: metadata.len(),
+        width,
+        height,
+        frames,
+    });
+    Ok(selected)
+}
+
+fn animation_index(phase: f64, frames: usize) -> usize {
+    if frames <= 1 {
+        return 0;
+    }
+    let normalized = phase.rem_euclid(100.0) / 100.0;
+    ((normalized * frames as f64).floor() as usize).min(frames - 1)
+}
+
+fn decode_animation_frames(path: &Path, width: u32, height: u32) -> Result<Vec<RgbImage>, String> {
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("gif"))
+    {
+        let decoder = GifDecoder::new(BufReader::new(
+            File::open(path).map_err(|error| error.to_string())?,
+        ))
+        .map_err(|error| error.to_string())?;
+        let mut frames = Vec::new();
+        let mut pixels = 0_u64;
+        for frame in decoder.into_frames().take(MAX_ANIMATION_FRAMES) {
+            let frame = frame.map_err(|error| error.to_string())?;
+            let resized = imageops::resize(
+                &frame.into_buffer(),
+                width,
+                height,
+                imageops::FilterType::Lanczos3,
+            );
+            let rgb = image::DynamicImage::ImageRgba8(resized).to_rgb8();
+            pixels = pixels.saturating_add(u64::from(rgb.width()) * u64::from(rgb.height()));
+            if pixels > MAX_ANIMATION_PIXELS && !frames.is_empty() {
+                break;
+            }
+            frames.push(rgb);
+        }
+        if !frames.is_empty() {
+            return Ok(frames);
+        }
+    }
+    let source = image::open(path)
+        .map_err(|error| error.to_string())?
+        .to_rgb8();
+    Ok(vec![imageops::resize(
+        &source,
+        width,
+        height,
+        imageops::FilterType::Lanczos3,
+    )])
+}
+
 fn draw_asset_id(
     image: &mut RgbImage,
     layer: &Layer,

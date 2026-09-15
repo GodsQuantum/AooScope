@@ -16,6 +16,20 @@ describe('DisplayControls', () => {
     expect(screen.queryByLabelText('Luminosité native')).toBeNull();
   });
 
+  it('keeps carousel interval visible while advanced display settings are collapsed', () => {
+    render(DisplayControls, {
+      props: {
+        capabilities: { width: 960, height: 376, native_brightness: false, power_control: true },
+        powerOn: true, brightness: 73, settings: { switch_seconds: 12 }
+      }
+    });
+    expect(screen.getByLabelText('Carousel interval (seconds)')).toBeTruthy();
+    const advanced = screen.getByText('Advanced display settings').closest('details');
+    expect(advanced).toBeTruthy();
+    expect(advanced?.hasAttribute('open')).toBe(false);
+    expect(screen.getByText('Native backlight control is unsupported; this adjusts rendered image luminance only.')).toBeTruthy();
+  });
+
   it('sends hardware power changes to the API', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ on: false }) });
     vi.stubGlobal('fetch', fetchMock);

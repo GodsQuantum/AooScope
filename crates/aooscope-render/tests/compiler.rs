@@ -360,6 +360,48 @@ fn full_ring_endpoint_is_filled_without_track_seam() {
     assert_eq!(image.get_pixel(130, 49).0, [53, 217, 255]);
 }
 
+#[test]
+fn animation_layers_render_asset_frames_without_synthetic_orbit_marker() {
+    use image::{Delay, Frame, Rgba, RgbaImage, codecs::gif::GifEncoder};
+    let root = temp_root("animated-asset");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = GifEncoder::new(&mut bytes);
+        encoder
+            .encode_frames([
+                Frame::from_parts(
+                    RgbaImage::from_pixel(2, 2, Rgba([220, 20, 20, 255])),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(100, 1),
+                ),
+                Frame::from_parts(
+                    RgbaImage::from_pixel(2, 2, Rgba([20, 220, 20, 255])),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(100, 1),
+                ),
+            ])
+            .unwrap();
+    }
+    let asset = media.ingest(&bytes, "pulse.gif").unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"animation", "name":"Animation", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#071019"},
+        "layers":[{"id":"anim","type":"animation","asset_id":asset.id,"x":100,"y":80,"width":120,"height":120,"z":1}]
+    })).unwrap();
+    let first = compile_page(&page, &StateDocument::default(), &media, 100, 0.0)
+        .unwrap()
+        .image;
+    let second = compile_page(&page, &StateDocument::default(), &media, 100, 60.0)
+        .unwrap()
+        .image;
+    assert_ne!(first.as_raw(), second.as_raw());
+    assert!(!first.pixels().any(|pixel| pixel.0 == [53, 217, 255]));
+    assert!(!second.pixels().any(|pixel| pixel.0 == [53, 217, 255]));
+}
+
 fn temp_root(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("aooscope-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);

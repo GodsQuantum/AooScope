@@ -195,7 +195,7 @@ describe('admin page persistence', () => {
     expect(pageBody).not.toHaveProperty('duration');
   });
 
-  it('refreshes the Orbit revision, preserves carousel drafts, then applies', async () => {
+  it('refreshes the splash revision, preserves carousel drafts, then applies', async () => {
     const writes: { path: string; body: any }[] = [];
     let pagesGets = 0;
     const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
@@ -212,13 +212,13 @@ describe('admin page persistence', () => {
     await screen.findByText('Home', { selector: 'h2' });
     await fireEvent.change(screen.getByRole('spinbutton', { name: 'Duration Home' }), { target: { value: '15' } });
     await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Source' }), { target: { value: 'logo' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Créer / mettre à jour Orbit' }));
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Splash source' }), { target: { value: 'logo' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Use as splash' }));
     await waitFor(() => expect(writes.map(({ path }) => path)).toEqual(['/api/media/presets/orbit', '/api/carousel', '/api/apply']));
     expect(writes[1].body).toMatchObject({ revision: 8, items: [expect.objectContaining({ id: 'home', duration: 15 }), expect.anything()] });
   });
 
-  it('keeps a newer user selection while Orbit creation is pending', async () => {
+  it('keeps a newer user selection while splash creation is pending', async () => {
     let resolveOrbit!: (value: ReturnType<typeof response>) => void;
     const orbit = new Promise<ReturnType<typeof response>>((resolve) => { resolveOrbit = resolve; });
     const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
@@ -230,8 +230,8 @@ describe('admin page persistence', () => {
     render(PageRoute);
     await screen.findByText('Home', { selector: 'h2' });
     await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Source' }), { target: { value: 'logo' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Créer / mettre à jour Orbit' }));
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Splash source' }), { target: { value: 'logo' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Use as splash' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/media/presets/orbit', expect.objectContaining({ method: 'POST' })));
     await fireEvent.click(screen.getByRole('button', { name: /Pages$/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Home Revision 3' }));
@@ -258,7 +258,7 @@ describe('admin page persistence', () => {
     render(PageRoute);
     await screen.findByText('Home', { selector: 'h2' });
     await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Aperçu Orbit' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Preview splash' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pages/splash', expect.anything()));
     await fireEvent.click(screen.getByRole('button', { name: /Pages$/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Home Revision 3' }));
