@@ -335,6 +335,7 @@ pub fn fuse_media_states(mut states: Vec<MediaDisplayEvent>) -> MediaDisplayEven
             matches!(state.source.as_deref(), Some("radarr" | "sonarr"))
                 && state.mode == MediaMode::Incoming
         })
+        && download_ids_match(&states[index], &qbit)
     {
         states[index] = merge_incoming(&states[index], &qbit);
         states.retain(|state| state.source.as_deref() != Some("qbittorrent"));
@@ -360,7 +361,10 @@ pub fn merge_incoming(primary: &MediaDisplayEvent, qbit: &MediaDisplayEvent) -> 
         .as_deref()
         .unwrap_or("")
         .to_ascii_lowercase();
-    let same_download = primary_id.is_empty() || qbit_id.is_empty() || primary_id == qbit_id;
+    let same_download = !primary_id.is_empty() && !qbit_id.is_empty() && primary_id == qbit_id;
+    if !same_download {
+        return out;
+    }
     out.provider_chain = vec![
         provider_name(primary.source.as_deref().unwrap_or("arr")),
         provider_name("qbittorrent"),
@@ -377,6 +381,16 @@ pub fn merge_incoming(primary: &MediaDisplayEvent, qbit: &MediaDisplayEvent) -> 
         }
     }
     out
+}
+
+fn download_ids_match(primary: &MediaDisplayEvent, qbit: &MediaDisplayEvent) -> bool {
+    primary
+        .download_id
+        .as_deref()
+        .zip(qbit.download_id.as_deref())
+        .is_some_and(|(left, right)| {
+            !left.is_empty() && !right.is_empty() && left.eq_ignore_ascii_case(right)
+        })
 }
 
 pub fn offline(source: &str) -> MediaDisplayEvent {
@@ -396,6 +410,42 @@ fn same_origin(target: &str, provider_base: &str) -> bool {
         && target.port_or_known_default() == base.port_or_known_default()
 }
 
+fn safe_poster_url<'a>(target: &'a str, provider_base: &str) -> Option<&'a str> {
+    let url = reqwest::Url::parse(target).ok()?;
+    (same_origin(target, provider_base)
+        || (url.scheme() == "https"
+            && matches!(
+                url.host_str(),
+                Some("image.tmdb.org" | "artworks.thetvdb.com")
+            )))
+    .then_some(target)
+}
+
+fn poster_headers(
+    source: &str,
+    secrets: &ProviderSecrets,
+    same_origin: bool,
+) -> Vec<(&'static str, String)> {
+    if !same_origin {
+        return Vec::new();
+    }
+    match source {
+        "jellyfin" => vec![(
+            "X-Emby-Token",
+            secret(secrets, source, "api_key").unwrap_or("").to_owned(),
+        )],
+        "silo" => secret(secrets, source, "api_key")
+            .map(|token| ("Authorization", format!("Bearer {token}")))
+            .into_iter()
+            .collect(),
+        "radarr" | "sonarr" => vec![(
+            "X-Api-Key",
+            secret(secrets, source, "api_key").unwrap_or("").to_owned(),
+        )],
+        _ => Vec::new(),
+    }
+}
+
 pub async fn cache_live_poster(
     event: &mut MediaDisplayEvent,
     settings: &Settings,
@@ -411,7 +461,7 @@ pub async fn cache_live_poster(
         .providers
         .get(source)
         .is_none_or(|provider| provider.verify_tls);
-    let Ok(client) = HttpClient::new(verify_tls) else {
+    let Ok(client) = HttpClient::new_without_redirects(verify_tls) else {
         return;
     };
     let provider_url = settings
@@ -420,26 +470,14 @@ pub async fn cache_live_poster(
         .map(|provider| provider.url.as_str())
         .unwrap_or_default();
     let same_origin = same_origin(&remote_url, provider_url);
-    let authorization = secret(secrets, source, "api_key").map(|token| format!("Bearer {token}"));
-    let headers = if same_origin {
-        match source {
-            "jellyfin" => vec![(
-                "X-Emby-Token",
-                secret(secrets, source, "api_key").unwrap_or(""),
-            )],
-            "silo" => authorization
-                .as_deref()
-                .map(|value| vec![("Authorization", value)])
-                .unwrap_or_default(),
-            "radarr" | "sonarr" => vec![(
-                "X-Api-Key",
-                secret(secrets, source, "api_key").unwrap_or(""),
-            )],
-            _ => Vec::new(),
-        }
-    } else {
-        Vec::new()
-    };
+    let headers = poster_headers(source, secrets, same_origin);
+    if safe_poster_url(&remote_url, provider_url).is_none() {
+        return;
+    }
+    let headers = headers
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect::<Vec<_>>();
     let Ok(bytes) = client
         .get_binary(&remote_url, &headers, MAX_POSTER_BYTES)
         .await
@@ -688,7 +726,11 @@ pub async fn collect_media_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{arr_queue_path, duration_minutes, same_origin};
+    use super::{
+        arr_queue_path, duration_minutes, merge_incoming, poster_headers, safe_poster_url,
+        same_origin,
+    };
+    use aooscope_types::{MediaDisplayEvent, MediaMode, ProviderSecrets};
 
     #[test]
     fn poster_credentials_are_limited_to_provider_origin() {
@@ -711,6 +753,52 @@ mod tests {
     }
 
     #[test]
+    fn poster_fetch_allows_only_established_https_artwork_cdns() {
+        assert_eq!(
+            safe_poster_url(
+                "https://radarr.example.test/poster",
+                "https://radarr.example.test"
+            ),
+            Some("https://radarr.example.test/poster")
+        );
+        assert_eq!(
+            safe_poster_url(
+                "https://image.tmdb.org/poster",
+                "https://radarr.example.test"
+            ),
+            Some("https://image.tmdb.org/poster")
+        );
+        assert_eq!(
+            safe_poster_url(
+                "https://artworks.thetvdb.com/poster",
+                "https://radarr.example.test"
+            ),
+            Some("https://artworks.thetvdb.com/poster")
+        );
+        for target in [
+            "https://example.invalid/poster",
+            "https://127.0.0.1/poster",
+            "https://localhost/poster",
+            "http://image.tmdb.org/poster",
+        ] {
+            assert_eq!(safe_poster_url(target, "https://radarr.example.test"), None);
+        }
+    }
+
+    #[test]
+    fn external_poster_never_receives_provider_credentials() {
+        let secrets: ProviderSecrets = serde_json::from_value(serde_json::json!({
+            "radarr": {"api_key": "secret"}
+        }))
+        .unwrap();
+        assert!(poster_headers("radarr", &secrets, false).is_empty());
+        assert_eq!(
+            poster_headers("radarr", &secrets, true),
+            vec![("X-Api-Key", "secret".to_owned())]
+        );
+    }
+
+    #[test]
     fn duration_parser_handles_days_and_rounding() {
         assert_eq!(duration_minutes(Some("00:08:01")), Some(9));
         assert_eq!(duration_minutes(Some("1.01:00:00")), Some(1500));
@@ -722,6 +810,32 @@ mod tests {
         assert!(arr_queue_path("radarr").contains("includeMovie=true"));
         assert!(arr_queue_path("sonarr").contains("includeSeries=true"));
         assert!(arr_queue_path("sonarr").contains("includeEpisode=true"));
+    }
+
+    #[test]
+    fn media_fusion_requires_matching_download_ids() {
+        let radarr = MediaDisplayEvent {
+            mode: MediaMode::Incoming,
+            source: Some("radarr".into()),
+            provider_chain: vec!["Radarr".into()],
+            title: Some("Movie".into()),
+            download_id: Some("radarr-id".into()),
+            progress_pct: Some(10.0),
+            ..Default::default()
+        };
+        let qbit = MediaDisplayEvent {
+            mode: MediaMode::Incoming,
+            source: Some("qbittorrent".into()),
+            provider_chain: vec!["qBittorrent".into()],
+            download_id: Some("different-id".into()),
+            progress_pct: Some(90.0),
+            eta_minutes: Some(1),
+            ..Default::default()
+        };
+        let fused = merge_incoming(&radarr, &qbit);
+        assert_eq!(fused.provider_chain, radarr.provider_chain);
+        assert_eq!(fused.progress_pct, radarr.progress_pct);
+        assert_eq!(fused.eta_minutes, radarr.eta_minutes);
     }
 
     #[tokio::test]

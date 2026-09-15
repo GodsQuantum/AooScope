@@ -208,6 +208,154 @@ async fn task_three_compatibility_contracts() {
 }
 
 #[tokio::test]
+async fn storage_regeneration_uses_inventory_and_preserves_custom_pages() {
+    let root = std::env::temp_dir().join(format!(
+        "aooscope-storage-regenerate-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let paths = AppPaths::new(&root);
+    bootstrap(&paths).unwrap();
+    let router = app(AppState::new(paths.clone()));
+
+    let response = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/pages/storage/regenerate",
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let pages: PagesDocument = serde_json::from_slice(&fs::read(paths.pages()).unwrap()).unwrap();
+    assert!(!pages.pages["page-storage"].enabled);
+
+    let disks = (0..7).map(|index| json!({"name":format!("Disk {index}"),"path":format!("/dev/sd{index}"),"size":100,"used":50})).collect::<Vec<_>>();
+    let smart = (0..7)
+        .map(|_| json!({"temperature_c":40,"health":"PASSED"}))
+        .collect::<Vec<_>>();
+    fs::write(
+        paths.state(),
+        serde_json::to_vec(&json!({"pve":{"disks":disks,"smart":smart}})).unwrap(),
+    )
+    .unwrap();
+    let response = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/pages/storage/regenerate",
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let pages: PagesDocument = serde_json::from_slice(&fs::read(paths.pages()).unwrap()).unwrap();
+    assert!(pages.pages["page-storage"].enabled);
+    assert!(pages.pages["page-storage-2"].enabled);
+
+    let colliding_page = &pages.pages["page-storage-2"];
+    let response = router
+        .clone()
+        .oneshot(request(
+            "PUT",
+            "/api/pages/page-storage-2",
+            json!({"revision":colliding_page.revision,"name":"Custom storage 2"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let disks = (0..13)
+        .map(|index| {
+            json!({"name":format!("Disk {index}"),"path":format!("/dev/sd{index}"),"size":100,"used":50})
+        })
+        .collect::<Vec<_>>();
+    fs::write(
+        paths.state(),
+        serde_json::to_vec(&json!({"pve":{"disks":disks,"smart":smart}})).unwrap(),
+    )
+    .unwrap();
+    let response = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/pages/storage/regenerate",
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let pages: PagesDocument = serde_json::from_slice(&fs::read(paths.pages()).unwrap()).unwrap();
+    assert_eq!(pages.pages["page-storage-2"].name, "Custom storage 2");
+    let generated = pages
+        .pages
+        .values()
+        .filter(|page| {
+            page.extra
+                .get(aooscope_server::templates::STORAGE_GENERATED_KEY)
+                .and_then(Value::as_bool)
+                == Some(true)
+                && page.enabled
+        })
+        .collect::<Vec<_>>();
+    assert!(pages.pages.contains_key("page-storage-2-generated-2"));
+    assert_eq!(
+        generated
+            .iter()
+            .flat_map(|page| page.layers.iter())
+            .filter(|layer| layer.id.starts_with("storage-name-"))
+            .count(),
+        13
+    );
+    let replacement_revision = pages.pages["page-storage-2-generated-2"].revision;
+    let response = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/pages/storage/regenerate",
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let pages: PagesDocument = serde_json::from_slice(&fs::read(paths.pages()).unwrap()).unwrap();
+    assert!(pages.pages.contains_key("page-storage-2-generated-2"));
+    assert!(!pages.pages.contains_key("page-storage-2-generated-3"));
+    assert!(pages.pages["page-storage-2-generated-2"].revision > replacement_revision);
+
+    let page = &pages.pages["page-storage"];
+    let response = router
+        .clone()
+        .oneshot(request(
+            "PUT",
+            "/api/pages/page-storage",
+            json!({"revision":page.revision,"name":"Custom storage"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    fs::write(
+        paths.state(),
+        serde_json::to_vec(&json!({"pve":{"disks":[],"smart":[]}})).unwrap(),
+    )
+    .unwrap();
+    let response = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/pages/storage/regenerate",
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let pages: PagesDocument = serde_json::from_slice(&fs::read(paths.pages()).unwrap()).unwrap();
+    assert_eq!(pages.pages["page-storage"].name, "Custom storage");
+    assert!(pages.pages["page-storage"].enabled);
+    assert!(pages.pages["page-storage-2"].enabled);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn invalid_page_update_is_rejected_without_changing_pages_json() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/appdata-v1");
     let temp = std::env::temp_dir().join(format!("aooscope-invalid-page-{}", std::process::id()));

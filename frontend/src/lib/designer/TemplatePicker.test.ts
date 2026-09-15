@@ -12,4 +12,11 @@ describe('TemplatePicker', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Semi rings/ }));
     expect(oncreate).toHaveBeenCalledWith('factory.semi-rings.v1');
   });
+
+  it('regenerates Storage from the live inventory action', async () => {
+    const onstorage = vi.fn();
+    render(TemplatePicker, { props: { oncreate: vi.fn(), onstorage } });
+    await fireEvent.click(screen.getByRole('button', { name: /Storage cards/ }));
+    expect(onstorage).toHaveBeenCalledOnce();
+  });
 });

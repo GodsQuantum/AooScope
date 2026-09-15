@@ -1,4 +1,5 @@
 use aooscope_config::AppPaths;
+use aooscope_server::providers::telemetry::normalize_proxmox;
 use aooscope_server::{AppState, app};
 use aooscope_types::StateDocument;
 use axum::{
@@ -133,4 +134,72 @@ fn storage_metric_count_matches_actual_disk_inventory() {
             );
         }
     }
+}
+
+#[test]
+fn storage_inventory_sorts_by_path_and_keeps_smart_binding_with_disk() {
+    let raw = serde_json::json!({
+        "disks": [
+            {"name":"B", "path":"/dev/sdb", "size":2, "used":1},
+            {"name":"A", "path":"/dev/sda", "size":4, "used":2}
+        ],
+        "smart": [
+            {"temperature_c":42, "health":"B-HEALTH"},
+            {"temperature_c":24, "health":"A-HEALTH"}
+        ]
+    });
+    let state: StateDocument = serde_json::from_value(serde_json::json!({
+        "pve": normalize_proxmox(&raw)
+    }))
+    .unwrap();
+    let devices = aooscope_server::storage::inventory(&state);
+    assert_eq!(
+        devices
+            .iter()
+            .map(|device| device.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/dev/sda", "/dev/sdb"]
+    );
+    assert_eq!(devices[0].temperature_c, Some(24.0));
+    assert_eq!(devices[0].health.as_deref(), Some("A-HEALTH"));
+    let metrics = aooscope_server::metrics::metric_catalog(&state);
+    assert_eq!(
+        metrics
+            .iter()
+            .find(|metric| metric.id == "aooscope_pve_disks_0_name")
+            .and_then(|metric| metric.value.as_ref())
+            .unwrap(),
+        &serde_json::json!("A")
+    );
+    assert_eq!(
+        metrics
+            .iter()
+            .find(|metric| metric.id == "aooscope_pve_smart_0_health")
+            .and_then(|metric| metric.value.as_ref())
+            .unwrap(),
+        &serde_json::json!("A-HEALTH")
+    );
+    assert_eq!(
+        metrics
+            .iter()
+            .find(|metric| metric.id == "aooscope_pve_smart_1_health")
+            .and_then(|metric| metric.value.as_ref())
+            .unwrap(),
+        &serde_json::json!("B-HEALTH")
+    );
+}
+
+#[test]
+fn storage_inventory_uses_smart_health_when_disk_health_is_null() {
+    let state: StateDocument = serde_json::from_value(serde_json::json!({
+        "pve": {"disks": [{"name":"A", "path":"/dev/sda", "health":null}], "smart": [{"health":"PASSED"}]}
+    }))
+    .unwrap();
+
+    assert_eq!(
+        aooscope_server::storage::inventory(&state)[0]
+            .health
+            .as_deref(),
+        Some("PASSED")
+    );
 }

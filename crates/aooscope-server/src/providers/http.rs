@@ -1,5 +1,5 @@
 use futures_util::StreamExt;
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Client, Response, StatusCode, redirect::Policy};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -22,13 +22,26 @@ pub enum HttpError {
 
 impl HttpClient {
     pub fn new(verify_tls: bool) -> Result<Self, HttpError> {
-        Self::new_with_ca(verify_tls, None)
+        Self::build(verify_tls, None, Policy::default())
     }
 
     pub fn new_with_ca(verify_tls: bool, ca_pem: Option<&[u8]>) -> Result<Self, HttpError> {
+        Self::build(verify_tls, ca_pem, Policy::default())
+    }
+
+    pub fn new_without_redirects(verify_tls: bool) -> Result<Self, HttpError> {
+        Self::build(verify_tls, None, Policy::none())
+    }
+
+    fn build(
+        verify_tls: bool,
+        ca_pem: Option<&[u8]>,
+        redirect_policy: Policy,
+    ) -> Result<Self, HttpError> {
         let mut builder = Client::builder()
             .timeout(Duration::from_secs(4))
             .danger_accept_invalid_certs(!verify_tls)
+            .redirect(redirect_policy)
             .user_agent("aooscope/0.3");
         if verify_tls && let Some(ca_pem) = ca_pem {
             let certificates =

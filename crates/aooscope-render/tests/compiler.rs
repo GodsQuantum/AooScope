@@ -3,7 +3,7 @@ use aooscope_render::typography::{
 };
 use aooscope_render::{HEIGHT, WIDTH, compile_document, compile_page};
 use aooscope_types::{Page, PagesDocument, StateDocument};
-use image::{Rgb, RgbImage};
+use image::{ImageEncoder, Rgb, RgbImage, Rgba, RgbaImage, codecs::png::PngEncoder};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -400,6 +400,63 @@ fn animation_layers_render_asset_frames_without_synthetic_orbit_marker() {
     assert_ne!(first.as_raw(), second.as_raw());
     assert!(!first.pixels().any(|pixel| pixel.0 == [53, 217, 255]));
     assert!(!second.pixels().any(|pixel| pixel.0 == [53, 217, 255]));
+}
+
+#[test]
+fn image_layers_apply_brightness_and_opacity() {
+    let root = temp_root("image-luminance");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let source = RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255]));
+    let mut bytes = Vec::new();
+    PngEncoder::new(&mut bytes)
+        .write_image(&source, 2, 2, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    let asset = media.ingest(&bytes, "poster.png").unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"image", "name":"Image", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#ffffff"},
+        "layers":[{"id":"poster","type":"image","asset_id":asset.id,"x":10,"y":10,"width":2,"height":2,"z":1}]
+    })).unwrap();
+    let dark = compile_page(&page, &StateDocument::default(), &media, 0, 0.0)
+        .unwrap()
+        .image;
+    assert_eq!(dark.get_pixel(10, 10).0, [0, 0, 0]);
+    let half = compile_page(&page, &StateDocument::default(), &media, 50, 0.0)
+        .unwrap()
+        .image;
+    assert_eq!(half.get_pixel(10, 10).0, [128, 0, 0]);
+    let mut transparent = page.clone();
+    transparent.layers[0].opacity = 0.0;
+    let unchanged = compile_page(&transparent, &StateDocument::default(), &media, 50, 0.0)
+        .unwrap()
+        .image;
+    assert_eq!(unchanged.get_pixel(10, 10).0, [127, 127, 127]);
+}
+
+#[test]
+fn transparent_animation_pixels_keep_the_page_background() {
+    use image::{Delay, Frame, codecs::gif::GifEncoder};
+    let root = temp_root("transparent-animation");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let mut bytes = Vec::new();
+    GifEncoder::new(&mut bytes)
+        .encode_frames([Frame::from_parts(
+            RgbaImage::from_pixel(2, 2, Rgba([0, 0, 0, 0])),
+            0,
+            0,
+            Delay::from_numer_denom_ms(100, 1),
+        )])
+        .unwrap();
+    let asset = media.ingest(&bytes, "transparent.gif").unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"animation", "name":"Animation", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#112233"},
+        "layers":[{"id":"anim","type":"animation","asset_id":asset.id,"x":10,"y":10,"width":2,"height":2,"z":1}]
+    })).unwrap();
+    let image = compile_page(&page, &StateDocument::default(), &media, 100, 0.0)
+        .unwrap()
+        .image;
+    assert_eq!(image.get_pixel(10, 10).0, [17, 34, 51]);
 }
 
 fn temp_root(name: &str) -> PathBuf {

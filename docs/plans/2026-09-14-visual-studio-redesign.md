@@ -193,7 +193,7 @@
 **Files:**
 - Modify tests/goldens/screenshots only as required by approved behavior
 - Modify: `README.md` / `README.fr.md` only for public user-facing feature changes
-- Deployment: CT130 compose/appdata outside Git
+- Deployment: production compose/appdata outside Git
 
 **Interfaces:**
 - Release artifact remains the single Rust binary image with embedded frontend.
@@ -204,8 +204,8 @@
 - [ ] **Step 2: Build OCI image** and run `tests/test_oci_smoke.sh` plus runtime executable scan; verify runtime process set remains `tini -> aooscope`.
 - [ ] **Step 3: Perform whole-branch review** against the approved design spec; fix Important/Critical findings and rerun affected gates.
 - [ ] **Step 4: Push feature branch and open PR only after local gates pass; wait for CI/container workflows to succeed before merge.**
-- [ ] **Step 5: After merge/GHCR publication, retrieve exact digest, create a fresh CT130 backup, and shadow-run the digest against copied appdata with no LCD device access.**
-- [ ] **Step 6: Cut over CT130** to `sha-<commit>@sha256:<digest>`, verify health/status/capabilities/providers, then verify real LCD pages and animation without reboot or undocumented opcode.
+- [ ] **Step 5: After merge/GHCR publication, retrieve exact digest, create a fresh production backup, and shadow-run the digest against copied appdata with no LCD device access.**
+- [ ] **Step 6: Cut over production** to `sha-<commit>@sha256:<digest>`, verify health/status/capabilities/providers, then verify real LCD pages and animation without reboot or undocumented opcode.
 - [ ] **Step 7: Apply the private deployment splash asset and storage-page regeneration explicitly after the generic runtime is healthy; verify media card/poster/ETA and disk capacity bars on the physical display.**
 - [ ] **Step 8: Clean merged local branches, stale scratch/build artifacts and obsolete shadow images while retaining rollback backups; confirm `main == origin/main` and clean working tree.
 
@@ -213,4 +213,4 @@
 
 ## Plan completion definition
 
-The plan is complete only when Tasks 1–8 are individually reviewed/committed, every mandatory gate is green, the public repo is privacy-clean, CT130 runs the pinned merged digest, the AOOSTAR LCD shows the new typography/storage/media visuals, and the private deployment animation is active without entering public Git.
+The plan is complete only when Tasks 1–8 are individually reviewed/committed, every mandatory gate is green, the public repo is privacy-clean, production runs the pinned merged digest, the AOOSTAR LCD shows the new typography/storage/media visuals, and the private deployment animation is active without entering public Git.

@@ -3,6 +3,7 @@ use aooscope_types::{Layer, Page, PageBackground};
 use serde_json::{Value, json};
 
 const CARD_LIMIT: usize = 6;
+pub const STORAGE_GENERATED_KEY: &str = "storage_generated";
 
 pub fn factory_page(template: &str, id: &str) -> Option<Page> {
     let (name, enabled, layers) = match template {
@@ -47,13 +48,15 @@ pub fn storage_pages(devices: &[StorageDevice]) -> Vec<Page> {
                 );
                 layers.extend(storage_card_layers(device, bounds));
             }
-            page(
+            let mut page = page(
                 &id,
                 "Storage",
                 !chunk.is_empty(),
                 "factory.storage.v1",
                 layers,
-            )
+            );
+            page.extra.insert(STORAGE_GENERATED_KEY.into(), json!(true));
+            page
         })
         .collect()
 }
@@ -225,7 +228,7 @@ fn storage_m2_layers() -> Vec<Layer> {
             json!({"id":format!("m2-slot-{index}"),"type":"text","x":x + 20,"y":y + 18,"width":72,"height":20,"z":4,"text":format!("M.2 {}", index + 1),"color":"#8fa2b7","scale":2}),
             json!({"id":format!("m2-name-{index}"),"type":"text","binding":format!("aooscope_pve_nvme_{index}_name"),"x":x + 105,"y":y + 17,"width":235,"height":24,"z":4,"color":"#eaf7ff","scale":3}),
             json!({"id":format!("m2-role-{index}"),"type":"text","binding":format!("aooscope_pve_nvme_{index}_role"),"x":x + 20,"y":y + 51,"width":120,"height":18,"z":4,"color":"#71859a","scale":2}),
-            json!({"id":format!("m2-bar-{index}"),"type":"bar","binding":temperature,"x":x + 20,"y":y + 86,"width":280,"height":12,"z":3,"color":"#9a6cff","track_color":"#211d35","min_value":20,"max_value":90,"radius":6}),
+            json!({"id":format!("m2-temp-label-{index}"),"type":"text","x":x + 20,"y":y + 86,"width":280,"height":16,"z":3,"text":"TEMPERATURE","color":"#71859a","scale":2}),
             json!({"id":format!("m2-temp-{index}"),"type":"value","binding":temperature,"x":x + 315,"y":y + 48,"width":100,"height":31,"z":4,"color":"#f4fbff","unit":" C","scale":3,"align":"right","fallback":"--"}),
             json!({"id":format!("m2-health-{index}"),"type":"badge","binding":format!("aooscope_pve_nvme_{index}_health"),"x":x + 315,"y":y + 82,"width":104,"height":24,"z":4,"background_color":"#12382f","color":"#62e3a3","radius":12,"scale":2,"align":"center","valign":"center","fallback":"HEALTHY"}),
         ]));

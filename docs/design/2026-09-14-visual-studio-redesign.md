@@ -183,7 +183,7 @@ Before delivery all existing gates remain mandatory:
 - `cargo audit`, `cargo deny check`, `git diff --check`;
 - OCI build, smoke and runtime scan.
 
-Deployment follows branch -> PR -> green CI -> merge -> GHCR digest -> shadow appdata -> backup -> pinned CT130 cutover -> API/provider/LCD verification. No production page reset is allowed merely to obtain new factory templates.
+Deployment follows branch -> PR -> green CI -> merge -> GHCR digest -> shadow appdata -> backup -> pinned production cutover -> API/provider/LCD verification. No production page reset is allowed merely to obtain new factory templates.
 
 ## Success criteria
 

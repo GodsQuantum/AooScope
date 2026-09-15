@@ -40,11 +40,16 @@ pub fn inventory(state: &StateDocument) -> Vec<StorageDevice> {
         .cloned()
         .unwrap_or_default();
 
+    let disks = disks
+        .into_iter()
+        .enumerate()
+        .map(|(index, disk)| (disk, smart.get(index).cloned().unwrap_or(Value::Null)))
+        .collect::<Vec<_>>();
+
     disks
         .iter()
         .enumerate()
-        .map(|(index, disk)| {
-            let smart = smart.get(index).unwrap_or(&Value::Null);
+        .map(|(index, (disk, smart))| {
             let total_bytes = bytes(disk.get("size")).unwrap_or_default();
             let used_bytes = bytes(disk.get("used"));
             let free_bytes = bytes(disk.get("avail"))
@@ -92,6 +97,7 @@ pub fn inventory(state: &StateDocument) -> Vec<StorageDevice> {
                     .and_then(Value::as_f64),
                 health: disk
                     .get("health")
+                    .filter(|value| !value.is_null())
                     .or_else(|| smart.get("health"))
                     .and_then(Value::as_str)
                     .map(str::to_owned),

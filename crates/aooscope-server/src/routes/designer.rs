@@ -11,7 +11,7 @@ use axum::{
 use image::ImageEncoder;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::fs;
+use std::{collections::HashSet, fs};
 
 type RouteError = (StatusCode, Json<Value>);
 
@@ -107,6 +107,80 @@ pub async fn create_page(
     Ok((StatusCode::CREATED, Json(page)))
 }
 
+pub async fn regenerate_storage_pages(
+    State(state): State<crate::state::AppState>,
+) -> Result<Json<Value>, RouteError> {
+    let mut document = load_pages(&state.paths).map_err(config_error)?;
+    let snapshot = load_state(&state.paths).map_err(config_error)?;
+    let generated = crate::templates::storage_pages(&crate::storage::inventory(&snapshot));
+    for page in document.pages.values_mut() {
+        if page
+            .extra
+            .get(crate::templates::STORAGE_GENERATED_KEY)
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            page.enabled = false;
+        }
+    }
+    let mut used_ids = document.pages.keys().cloned().collect::<HashSet<_>>();
+    for generated_page in generated {
+        let mut generated_page = generated_page;
+        if document.pages.get(&generated_page.id).is_some_and(|page| {
+            page.extra
+                .get(crate::templates::STORAGE_GENERATED_KEY)
+                .and_then(Value::as_bool)
+                != Some(true)
+        }) {
+            let base_id = generated_page.id.clone();
+            let mut suffix = 2;
+            let replacement_id = loop {
+                let candidate = format!("{base_id}-generated-{suffix}");
+                if !used_ids.contains(&candidate)
+                    || document.pages.get(&candidate).is_some_and(|page| {
+                        page.extra
+                            .get(crate::templates::STORAGE_GENERATED_KEY)
+                            .and_then(Value::as_bool)
+                            == Some(true)
+                    })
+                {
+                    break candidate;
+                }
+                suffix += 1;
+            };
+            generated_page.id = replacement_id;
+        }
+        used_ids.insert(generated_page.id.clone());
+        match document.pages.get_mut(&generated_page.id) {
+            Some(existing)
+                if existing
+                    .extra
+                    .get(crate::templates::STORAGE_GENERATED_KEY)
+                    .and_then(Value::as_bool)
+                    == Some(true) =>
+            {
+                let revision = existing.revision + 1;
+                *existing = generated_page;
+                existing.revision = revision;
+            }
+            Some(_) => {}
+            None => {
+                document.carousel.push(generated_page.id.clone());
+                document
+                    .pages
+                    .insert(generated_page.id.clone(), generated_page);
+            }
+        }
+    }
+    validate_document(&document)
+        .map_err(|issues| error(StatusCode::UNPROCESSABLE_ENTITY, &issues.join("; ")))?;
+    document.revision += 1;
+    atomic_write_json(&state.paths.pages(), &document).map_err(config_error)?;
+    Ok(Json(
+        json!({"ok":true,"revision":document.revision,"storage_pages":document.carousel.iter().filter(|id| id.starts_with("page-storage")).collect::<Vec<_>>() }),
+    ))
+}
+
 pub async fn update_page(
     State(state): State<crate::state::AppState>,
     Path(id): Path<String>,
@@ -137,6 +211,15 @@ pub async fn update_page(
     candidate["revision"] = json!(old.revision + 1);
     let page: Page = serde_json::from_value(candidate)
         .map_err(|_| error(StatusCode::UNPROCESSABLE_ENTITY, "invalid page"))?;
+    let mut page = page;
+    if old
+        .extra
+        .get(crate::templates::STORAGE_GENERATED_KEY)
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        page.extra.remove(crate::templates::STORAGE_GENERATED_KEY);
+    }
     document.pages.insert(id, page.clone());
     validate_document(&document)
         .map_err(|issues| error(StatusCode::UNPROCESSABLE_ENTITY, &issues.join("; ")))?;
