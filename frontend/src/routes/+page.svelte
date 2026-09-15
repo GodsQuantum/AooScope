@@ -18,7 +18,7 @@
   import { clampRect, createWidgetId, isLatestRequest, type Layer, type Metric, type Page, type WidgetType } from '$lib/designer/model';
 
   type StatusDto = components['schemas']['StatusDto'];
-  type MediaEvent = { mode?: 'playing' | 'incoming' | 'landed' | 'offline' | 'idle'; title?: string; poster_url?: string; progress_pct?: number; eta_minutes?: number; speed_bytes_s?: number; provider_chain?: string[] };
+  type MediaEvent = { mode?: 'playing' | 'incoming' | 'landed' | 'offline' | 'idle'; title?: string; poster_url?: string; poster_asset_id?: string; progress_pct?: number; remaining_minutes?: number; eta_minutes?: number; speed_bytes_s?: number; provider_chain?: string[] };
   type Asset = { id: string; name: string; kind?: string; format?: string; revision?: number; width?: number; height?: number };
   type Preset = { id: string; name: string; source_asset_id: string; settings: { fps: number; speed_seconds: number } };
   type ProviderDescriptor = { id: string; name: string; icon: string; categories: string[]; credential_fields: string[] };

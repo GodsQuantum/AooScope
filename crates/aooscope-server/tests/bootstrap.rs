@@ -399,7 +399,7 @@ fn factory_templates_are_deterministic_native_and_complete() {
             10264025068728205431,
             1848912279559255029,
             4505336165427745734,
-            9091733769383410979,
+            7364605711451741370,
         ],
         "factory visuals changed"
     );
@@ -477,7 +477,6 @@ fn expected_bindings(id: &str) -> BTreeSet<String> {
             "aooscope_media_display_source",
             "aooscope_media_display_provider_chain",
             "aooscope_media_display_progress_pct",
-            "aooscope_media_display_eta_minutes",
             "aooscope_media_display_speed_bytes_s",
         ]
         .into_iter()

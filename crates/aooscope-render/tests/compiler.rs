@@ -291,6 +291,43 @@ fn nested_state_bindings_and_text_units_are_rendered() {
 }
 
 #[test]
+fn media_headline_renders_human_eta_and_playback_remaining_time() {
+    let root = temp_root("media-headline");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let dynamic: Page = serde_json::from_value(json!({
+        "id":"media", "name":"Media", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#071019"},
+        "layers":[{"id":"headline","type":"text","binding":"aooscope_media_display_headline","x":20,"y":20,"width":500,"height":64,"z":1,"color":"#62e3a3","font_size":42}]
+    })).unwrap();
+    let static_page = |text: &str| -> Page {
+        serde_json::from_value(json!({
+            "id":"expected", "name":"Expected", "enabled":true, "duration":8, "revision":1,
+            "background":{"color":"#071019"},
+            "layers":[{"id":"headline","type":"text","text":text,"x":20,"y":20,"width":500,"height":64,"z":1,"color":"#62e3a3","font_size":42}]
+        })).unwrap()
+    };
+    for (display, expected) in [
+        (json!({"mode":"incoming","eta_minutes":7}), "READY IN 7 MIN"),
+        (
+            json!({"mode":"playing","remaining_minutes":18}),
+            "18 MIN LEFT",
+        ),
+    ] {
+        let state = StateDocument {
+            media: Some(json!({"display":display})),
+            ..Default::default()
+        };
+        let rendered = compile_page(&dynamic, &state, &media, 100, 0.0)
+            .unwrap()
+            .image;
+        let expected = compile_page(&static_page(expected), &state, &media, 100, 0.0)
+            .unwrap()
+            .image;
+        assert_eq!(rendered.as_raw(), expected.as_raw());
+    }
+}
+
+#[test]
 fn factory_semantics_cover_home_storage_compute_media_and_splash() {
     let root = temp_root("goldens");
     let media = aooscope_render::MediaStore::new(&root).unwrap();
