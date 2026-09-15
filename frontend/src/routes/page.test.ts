@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import PageRoute from './+page.svelte';
 
@@ -195,7 +195,7 @@ describe('admin page persistence', () => {
     expect(pageBody).not.toHaveProperty('duration');
   });
 
-  it('refreshes the Orbit revision, preserves carousel drafts, then applies', async () => {
+  it('refreshes the splash revision, preserves carousel drafts, then applies', async () => {
     const writes: { path: string; body: any }[] = [];
     let pagesGets = 0;
     const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
@@ -212,13 +212,13 @@ describe('admin page persistence', () => {
     await screen.findByText('Home', { selector: 'h2' });
     await fireEvent.change(screen.getByRole('spinbutton', { name: 'Duration Home' }), { target: { value: '15' } });
     await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Source' }), { target: { value: 'logo' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Créer / mettre à jour Orbit' }));
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Splash source' }), { target: { value: 'logo' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Use as splash' }));
     await waitFor(() => expect(writes.map(({ path }) => path)).toEqual(['/api/media/presets/orbit', '/api/carousel', '/api/apply']));
     expect(writes[1].body).toMatchObject({ revision: 8, items: [expect.objectContaining({ id: 'home', duration: 15 }), expect.anything()] });
   });
 
-  it('keeps a newer user selection while Orbit creation is pending', async () => {
+  it('keeps a newer user selection while splash creation is pending', async () => {
     let resolveOrbit!: (value: ReturnType<typeof response>) => void;
     const orbit = new Promise<ReturnType<typeof response>>((resolve) => { resolveOrbit = resolve; });
     const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
@@ -230,8 +230,8 @@ describe('admin page persistence', () => {
     render(PageRoute);
     await screen.findByText('Home', { selector: 'h2' });
     await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Source' }), { target: { value: 'logo' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Créer / mettre à jour Orbit' }));
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Splash source' }), { target: { value: 'logo' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Use as splash' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/media/presets/orbit', expect.objectContaining({ method: 'POST' })));
     await fireEvent.click(screen.getByRole('button', { name: /Pages$/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Home Revision 3' }));
@@ -258,7 +258,7 @@ describe('admin page persistence', () => {
     render(PageRoute);
     await screen.findByText('Home', { selector: 'h2' });
     await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Aperçu Orbit' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Preview splash' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pages/splash', expect.anything()));
     await fireEvent.click(screen.getByRole('button', { name: /Pages$/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Home Revision 3' }));
@@ -310,4 +310,86 @@ describe('admin page persistence', () => {
     expect((screen.getByRole('spinbutton', { name: 'Duration Splash' }) as HTMLInputElement).value).toBe('8');
     expect(fetchMock).toHaveBeenCalledWith('/api/pages/home/restore', expect.objectContaining({ method: 'POST' }));
   });
+  it('uses a canvas-first studio with friendly metrics and no permanent inspector', async () => {
+    const boundHome = { ...home, layers: [{ id: 'cpu', type: 'gauge', binding: 'aooscope_pve_cpu_pct', x: 20, y: 20, width: 180, height: 120, z: 1 }] };
+    const fetchMock = vi.fn(async (path: string) => {
+      if (path === '/api/pages/home') return response(boundHome);
+      if (path === '/api/metrics') return response({ metrics: [{ id: 'aooscope_pve_cpu_pct', label: 'Utilisation CPU', provider_name: 'Proxmox', category: 'CPU', value: 42, demo_value: 50, unit: '%', recommended_widgets: ['gauge', 'value', 'bar'] }] });
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    expect(screen.getByTestId('page-strip')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '+ Metric' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Templates' })).toBeTruthy();
+    expect(screen.getByText('Utilisation CPU')).toBeTruthy();
+    expect(screen.queryByText('aooscope_pve_cpu_pct')).toBeNull();
+    expect(screen.queryByText('Inspecteur')).toBeNull();
+  });
+
+  it('applies contextual representation changes to the selected layer', async () => {
+    const boundHome = { ...home, layers: [{ id: 'cpu', type: 'gauge', binding: 'aooscope_pve_cpu_pct', x: 20, y: 20, width: 180, height: 120, z: 1 }] };
+    const fetchMock = vi.fn(async (path: string) => {
+      if (path === '/api/pages/home') return response(boundHome);
+      if (path === '/api/metrics') return response({ metrics: [{ id: 'aooscope_pve_cpu_pct', label: 'Utilisation CPU', provider_name: 'Proxmox', category: 'CPU', value: 42, demo_value: 50, unit: '%', recommended_widgets: ['gauge', 'value', 'bar'] }] });
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    const layer = await screen.findByRole('button', { name: 'Utilisation CPU 42%' });
+    await fireEvent.click(layer);
+    await fireEvent.click(screen.getByRole('button', { name: 'Bar' }));
+    expect(layer.classList.contains('bar')).toBe(true);
+  });
+
+  it('inserts a metric with friendly canvas content and hides its binding', async () => {
+    const metric = { id: 'aooscope_pve_cpu_pct', label: 'Utilisation CPU', provider_name: 'Proxmox', category: 'CPU', value: 42, demo_value: 50, unit: '%', recommended_widgets: ['gauge', 'value', 'bar'] };
+    const fetchMock = vi.fn(async (path: string) => path === '/api/metrics' ? response({ metrics: [metric] }) : response(initial(path)));
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: '+ Metric' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Utilisation CPU' }));
+    const canvas = within(screen.getByTestId('logical-canvas'));
+    expect(canvas.getByText('Utilisation CPU')).toBeTruthy();
+    expect(canvas.getByText('42%')).toBeTruthy();
+    expect(screen.queryByText(metric.id)).toBeNull();
+  });
+
+  it('adds bound text metrics without replacing their value or changing static text defaults', async () => {
+    const metric = { id: 'aooscope_pve_disks_0_name', label: 'Disque 1 · nom', provider_name: 'Proxmox', category: 'Stockage', value: 'NVMe', demo_value: 'Disk 1', unit: '', recommended_widgets: ['text'] };
+    const fetchMock = vi.fn(async (path: string) => path === '/api/metrics' ? response({ metrics: [metric] }) : response(initial(path)));
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByText('More widgets'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Ajouter Texte' }));
+    const canvas = within(screen.getByTestId('logical-canvas'));
+    expect(canvas.getByText('Text')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: '+ Metric' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Disque 1 · nom' }));
+    expect(canvas.getByText('Disque 1 · nom')).toBeTruthy();
+    expect(canvas.getAllByText('Text')).toHaveLength(1);
+  });
+
+  it('creates a template through template_id and selects the returned page', async () => {
+    const created = { ...home, id: 'semi', name: 'Semi rings', revision: 1, template_id: 'factory.semi-rings.v1' };
+    let createdVisible = false;
+    const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
+      if (path === '/api/pages' && options.method === 'POST') { createdVisible = true; return response(created); }
+      if (path === '/api/pages' && createdVisible) return response({ schema_version: 1, revision: 8, carousel: ['home', 'splash', 'semi'], pages: [summary(home), summary(splash), summary(created)] });
+      if (path === '/api/pages/semi') return response(created);
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Templates' }));
+    await fireEvent.click(screen.getByRole('button', { name: /Semi rings/ }));
+    await screen.findByText('Semi rings', { selector: 'h2' });
+    const request = fetchMock.mock.calls.find(([path, options]) => path === '/api/pages' && options?.method === 'POST');
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ template_id: 'factory.semi-rings.v1' });
+  });
+
 });

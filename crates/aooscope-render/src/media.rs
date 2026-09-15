@@ -199,6 +199,17 @@ impl MediaStore {
         self.write_asset(Some(id), bytes, filename)
     }
 
+    pub fn upsert(&self, id: &str, bytes: &[u8], filename: &str) -> Result<MediaAsset, MediaError> {
+        if id.is_empty()
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(MediaError::Invalid("invalid asset id".into()));
+        }
+        self.write_asset(Some(id), bytes, filename)
+    }
+
     fn write_asset(
         &self,
         id: Option<&str>,

@@ -7,6 +7,10 @@ ignore = [
   # Transitive from asterctl-lcd -> image(default features). Upstream HEAD is pinned
   # and still carries `TODO make image an optional feature`; no safe upgrade exists.
   "RUSTSEC-2024-0436",
+  # fontdue 0.9.4 depends on ttf-parser 0.25.1. This advisory is maintenance
+  # status only (not a vulnerability) and explicitly has no safe upgrade;
+  # keep the exception narrow until typography migrates to an active parser.
+  "RUSTSEC-2026-0192",
 ]
 
 [licenses]
@@ -23,6 +27,7 @@ allow = [
   "CDLA-Permissive-2.0",
   "ISC",
   "NCSA",
+  "OFL-1.1",
 ]
 
 [bans]

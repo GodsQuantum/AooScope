@@ -1,13 +1,15 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" width="170" alt="AooScope logo">
+  <img src="docs/assets/logo.svg" width="170" alt="AooScope AOOSTAR WTR MAX LCD dashboard logo">
 </p>
 
-<h1 align="center">AooScope</h1>
+<h1 align="center">AooScope — AOOSTAR WTR MAX LCD Dashboard</h1>
 
-<p align="center"><strong>A glanceable smart dashboard for AOOSTAR LCD systems.</strong></p>
+<p align="center"><strong>The open-source Linux dashboard for the AOOSTAR WTR MAX monitoring screen.</strong><br>
+Turn the 960×376 front LCD into live Proxmox, storage, hardware and media telemetry.</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/display-960×376-18d7ff" alt="960x376 display">
+  <img src="https://img.shields.io/badge/AOOSTAR-WTR%20MAX-18d7ff" alt="AOOSTAR WTR MAX">
+  <img src="https://img.shields.io/badge/display-960×376-18d7ff" alt="960x376 LCD">
   <img src="https://img.shields.io/badge/runtime-Docker-2496ed" alt="Docker">
   <img src="https://img.shields.io/badge/license-MIT-3dd7cf" alt="MIT license">
   <img src="https://img.shields.io/badge/image-GHCR-54cd8a" alt="GHCR image">
@@ -15,42 +17,46 @@
 
 <p align="center">🇫🇷 <a href="README.fr.md">README en français</a></p>
 
----
+<p align="center">
+  <img src="docs/assets/screenshots/studio.png" width="100%" alt="AooScope visual page studio for the AOOSTAR WTR MAX LCD">
+</p>
 
-AooScope turns the small AOOSTAR LCD into a useful server display rather than a tiny wall of text. It combines large values with visual gauges, storage health, compute telemetry and event-driven media cards that can be understood from across the room.
+AooScope is a community-built control studio for the **AOOSTAR WTR MAX** LCD. It replaces a tiny wall of monitoring text with glanceable pages: large values, rings and bars, adaptive disk health, Proxmox metrics, media posters and human ETAs such as **READY IN 8 MIN**.
 
-It is a fork and substantial rewrite of `xavtb78/aoostar-proxmox-lcd`, while keeping `zehnm/aoostar-rs` as the low-level display engine.
+The primary target is the **AOOSTAR WTR MAX 8845HS / WTR MAX NAS** running Linux, Proxmox or another Docker-capable homelab OS. Other AOOSTAR systems exposing the same supported serial LCD protocol may work too.
 
-## ✨ Highlights
+## Why AooScope
 
-- **Far-glance UI** — large numerals, semantic colour, visual gauges and protected text zones designed for a 960×376 panel.
-- **Hardware telemetry** — Linux sysfs temperatures, Radeon activity and shared GPU memory without a host agent.
-- **Proxmox provider** — CPU, RAM, guests, storage, ZFS and SMART through the native read-only API.
-- **Media-aware display** — Jellyfin/Silo playback and Radarr/qBittorrent arrivals can temporarily pre-empt the normal carousel.
-- **Poster-first media cards** — `PLAYING 42%`, `READY IN 9 MIN` and `JUST LANDED` instead of dense tables.
-- **Admin UI** — configure display behaviour and provider `IP:port`/URLs from the browser.
-- **Provider secrets stay private** — saved separately with mode `0600` and never returned by the settings API.
-- **Software brightness schedule** — choose a base luminance and schedules such as `22:00–08:00 → 70%`.
-- **Failure isolation** — an offline provider does not stop the LCD.
-- **Pull-and-run container** — no development toolchain required on the target system.
+- **Made for the WTR MAX screen** — layouts are designed around the real 960×376 LCD workspace, not a desktop dashboard squeezed onto it.
+- **Visual Studio, not config-file art** — drag, resize and bind friendly metrics from the browser; raw metric IDs stay in Advanced.
+- **Adaptive storage pages** — detect disks, show used/total, capacity bars, temperature and SMART health, and paginate automatically as storage grows.
+- **Media that reads like a status display** — Jellyfin/Silo playback plus Radarr/Sonarr/qBittorrent arrivals, poster art, progress and remaining time.
+- **Proxmox + hardware telemetry** — CPU, RAM, guests, Linux/sysfs thermals and Radeon activity without a second host daemon.
+- **Safe display controls** — supported LCD power control, software luminance, carousel timing and schedules with no undocumented hardware opcodes.
+- **One small container** — Rust/Axum backend with the Svelte UI embedded; no Python or Node runtime on the target.
 
-> **Brightness note:** no documented native WTR MAX backlight command is currently exposed by `aoostar-rs`. AooScope brightness is therefore software luminance: it scales the rendered pixels, not the physical backlight power.
+## See it in action
 
-## 🧩 Visual Page Designer
+<p align="center">
+  <img src="docs/assets/screenshots/media.png" width="49%" alt="AooScope AOOSTAR WTR MAX media dashboard with Radarr qBittorrent poster progress and ETA">
+  <img src="docs/assets/screenshots/display.png" width="49%" alt="AooScope AOOSTAR WTR MAX LCD power luminance and carousel controls">
+</p>
 
-AooScope 0.2 adds a 960×376 WYSIWYG editor in the Admin UI. Create, duplicate, reorder, enable/disable and delete carousel pages; drag live sensors onto the canvas; choose value, bar, gauge, ring, badge or sparkline widgets; upload reusable media; preview drafts; and apply atomically to the LCD with rollback.
+The screenshots use generic demo data but are captured from the real application UI.
 
-Images can be reused across pages. **Animate** turns a logo into an orbital HTML/CSS preview; on the WTR MAX the orbit is driven by a synthetic sensor and `aoostar-rs` partial updates (default 5 FPS, capped at 8 FPS) instead of full-frame video. Uploaded GIF/video files are accepted as animation sources, but full-frame high-FPS playback is intentionally not used on the serial LCD.
+## Visual Page Studio
 
-Edits are drafts until **Apply to LCD**. Brightness schedules re-render the last applied revision without promoting unpublished drafts.
+The canvas-first editor keeps the LCD visible while you work. Pick a metric by human name and AooScope chooses a sensible representation; switch between value, bar, ring, gauge or badge when useful. Templates provide **Semi rings**, **Vertical bars**, **Horizontal bars**, **Media** and adaptive **Storage cards** as normal editable layers.
 
-## 🚀 Quick start
+Storage pages are inventory-driven and paginate at up to six disks per page. Existing customized pages are preserved when you explicitly regenerate storage layouts.
 
-Requirements:
+Media and splash assets share the same bounded media pipeline. Uploaded image/GIF splash animations render real frames on the LCD; posters are cached locally and external artwork fetching is restricted to safe origins.
 
-- Linux + Docker Engine / compatible Compose;
-- a supported AOOSTAR LCD exposed as a serial device, commonly `/dev/ttyACM0`;
-- permission for Docker to open that device.
+Edits remain drafts until **Apply to LCD**. Applying is revision-aware so an unpublished page draft is not silently promoted by a brightness schedule or background refresh.
+
+## Quick start
+
+Requirements: Linux + Docker Engine / compatible Compose, a supported AOOSTAR LCD exposed as a serial device (commonly `/dev/ttyACM0`), and permission for Docker to open that device.
 
 ```bash
 mkdir -p aooscope/data
@@ -62,45 +68,33 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Open `http://127.0.0.1:8765` locally, or change `AOOSCOPE_BIND_ADDRESS` to a trusted LAN address.
+Open `http://127.0.0.1:8765` locally, or set `AOOSCOPE_BIND_ADDRESS` to a trusted LAN address.
 
-The image is published as:
+The published image is:
 
 ```text
 ghcr.io/godsquantum/aooscope:latest
 ```
 
-## 🖥️ Display behaviour
+## WTR MAX display behaviour
 
-The normal carousel is intentionally small:
+The normal carousel is intentionally glanceable:
 
 ```text
 Splash → Home → Storage → Compute
 ```
 
-When a media event is present, Media becomes the first page. When the event disappears, AooScope returns to the normal carousel automatically.
+When a media event is active, Media can take priority and then return to the normal carousel automatically. Typical states are `24 MIN LEFT`, `READY IN 9 MIN`, `JUST LANDED` and `MEDIA OFFLINE`.
 
-Text is kept visually above dynamic gauges by reserving transparent windows inside gauge assets, so the value/label cannot be covered at high utilisation.
+> **Brightness note:** no documented native WTR MAX backlight command is currently exposed by `aoostar-rs`. AooScope luminance therefore scales rendered pixels; it does not claim to change the physical backlight level.
 
-## 🔌 Providers
+## Providers
 
-The Admin UI currently understands configuration for:
-
-- Proxmox VE
-- Beszel
-- Jellyfin
-- Silo
-- Radarr
-- Sonarr
-- qBittorrent
-- Immich
-- Ollama
-
-Proxmox, Jellyfin, Silo, Radarr and qBittorrent already feed runtime display state. Other providers are available for connection testing/configuration and are designed to be added to new pages without changing the display engine.
+The Admin UI supports configuration for **Proxmox VE, Beszel, Jellyfin, Silo, Radarr, Sonarr, qBittorrent, Immich and Ollama**. Proxmox, Jellyfin, Silo, Radarr, Sonarr and qBittorrent already feed runtime display state; other providers can be connection-tested and extended into pages.
 
 See [`docs/providers.md`](docs/providers.md).
 
-## 🧱 Architecture
+## Architecture
 
 ```text
 Provider APIs + Linux sysfs
@@ -110,42 +104,42 @@ Provider APIs + Linux sysfs
           │
     telemetry loop
           │
-          ├── sensors/*.txt ─────┐
-          └── state.json         │
-                                 ▼
+          ▼
 Rust/Axum + embedded Svelte UI
-              │
-     state, providers, renderer
-              │
-       asterctl-lcd driver ─► AOOSTAR LCD
+          │
+   renderer + media cache
+          │
+   asterctl-lcd driver ─► AOOSTAR LCD
 ```
 
-AooScope stays in one container. It does **not** require host networking, the Docker socket, privileged mode or a monitoring daemon installed on the Proxmox host.
+AooScope stays in one container. It does **not** require host networking, the Docker socket, privileged mode or a monitoring daemon installed directly on the Proxmox host.
 
-See [`docs/architecture.md`](docs/architecture.md).
+See [`docs/architecture.md`](docs/architecture.md) and [`docs/deployment.md`](docs/deployment.md).
 
-## 🔐 Security
+## Security
 
-The Admin UI has no built-in login. The example Compose binds to `127.0.0.1` by default. Use an authenticated reverse proxy or VPN for remote access and do not expose port `8765` directly to the internet.
+The Admin UI has no built-in login. The public Compose binds to `127.0.0.1` by default. Use an authenticated reverse proxy or VPN for remote access and do not expose port `8765` directly to the internet.
+
+Provider secrets are stored separately with restrictive permissions and are never returned by the public settings API. Poster downloads are bounded; redirects are disabled and provider credentials are never forwarded to external artwork CDNs.
 
 See [`SECURITY.md`](SECURITY.md).
 
-## 🛠️ Development
+## Development
 
 ```bash
 cargo xtask check
 bash tests/test_deployment.sh
 ```
 
-The public `compose.yaml` is intentionally pull-only and always consumes the published GHCR image. For local image development, build the Dockerfile directly instead of adding a second Compose file:
+The public `compose.yaml` is intentionally pull-only and consumes the published GHCR image. For local image development, build the Dockerfile directly:
 
 ```bash
 docker build -t aooscope:dev .
 ```
 
-## 🙏 Credits
+## Credits
 
 - [`xavtb78/aoostar-proxmox-lcd`](https://github.com/xavtb78/aoostar-proxmox-lcd) — project this fork started from.
 - [`zehnm/aoostar-rs`](https://github.com/zehnm/aoostar-rs) — pinned `asterctl-lcd` display protocol crate.
 
-AooScope is independent and is not affiliated with or endorsed by AOOSTAR. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+AooScope is independent community software and is not affiliated with or endorsed by AOOSTAR. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
