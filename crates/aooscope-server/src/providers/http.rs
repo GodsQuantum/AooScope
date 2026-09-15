@@ -59,6 +59,22 @@ impl HttpClient {
         json_response(response).await
     }
 
+    pub async fn get_binary(
+        &self,
+        target: &str,
+        headers: &[(&str, &str)],
+        limit: usize,
+    ) -> Result<Vec<u8>, HttpError> {
+        let response = self
+            .request(self.client.get(target), headers)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(HttpError::Status);
+        }
+        bounded_body(response, limit).await
+    }
+
     pub async fn post_json(
         &self,
         base: &str,

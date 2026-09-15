@@ -3,7 +3,10 @@ use aooscope_types::{
     MediaDisplayEvent, MediaMode, ProviderSecrets, ProviderSettings, Settings, provider_name,
 };
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
+
+const LIVE_POSTER_ASSET_ID: &str = "live-poster";
+const MAX_POSTER_BYTES: usize = 4 * 1024 * 1024;
 
 const ACTIVE_QBIT_STATES: &[&str] = &[
     "downloading",
@@ -62,6 +65,11 @@ fn rounded_pct(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
 
+fn remaining_minutes(duration: f64, position: f64, units_per_second: f64) -> Option<u64> {
+    (duration > 0.0 && units_per_second > 0.0)
+        .then(|| (((duration - position).max(0.0) / units_per_second) / 60.0).ceil() as u64)
+}
+
 pub fn normalize_jelly_sessions(
     sessions: &Value,
     source: &str,
@@ -95,6 +103,7 @@ pub fn normalize_jelly_sessions(
         title: Some(title.unwrap_or("Playing").to_owned()),
         poster_url: item_poster(base_url, item_id),
         progress_pct,
+        remaining_minutes: remaining_minutes(runtime, position, 10_000_000.0),
         paused: Some(
             play.get("IsPaused")
                 .and_then(Value::as_bool)
@@ -140,6 +149,7 @@ pub fn normalize_silo_sessions(sessions: &Value, base_url: Option<&str>) -> Medi
         ),
         poster_url: absolute_url(base_url, text(session.get("poster_url"))),
         progress_pct: (duration > 0.0).then(|| rounded_pct(position * 100.0 / duration)),
+        remaining_minutes: remaining_minutes(duration, position, 1.0),
         paused: Some(
             session
                 .get("is_paused")
@@ -315,6 +325,23 @@ pub fn select_display_event(states: &[MediaDisplayEvent]) -> MediaDisplayEvent {
         .unwrap_or_default()
 }
 
+pub fn fuse_media_states(mut states: Vec<MediaDisplayEvent>) -> MediaDisplayEvent {
+    let qbit = states
+        .iter()
+        .find(|state| state.source.as_deref() == Some("qbittorrent"))
+        .cloned();
+    if let Some(qbit) = qbit
+        && let Some(index) = states.iter().position(|state| {
+            matches!(state.source.as_deref(), Some("radarr" | "sonarr"))
+                && state.mode == MediaMode::Incoming
+        })
+    {
+        states[index] = merge_incoming(&states[index], &qbit);
+        states.retain(|state| state.source.as_deref() != Some("qbittorrent"));
+    }
+    select_display_event(&states)
+}
+
 pub fn merge_incoming(primary: &MediaDisplayEvent, qbit: &MediaDisplayEvent) -> MediaDisplayEvent {
     if primary.mode != MediaMode::Incoming {
         return qbit.clone();
@@ -354,6 +381,87 @@ pub fn merge_incoming(primary: &MediaDisplayEvent, qbit: &MediaDisplayEvent) -> 
 
 pub fn offline(source: &str) -> MediaDisplayEvent {
     event(MediaMode::Offline, source)
+}
+
+fn same_origin(target: &str, provider_base: &str) -> bool {
+    let Ok(target) = reqwest::Url::parse(target) else {
+        return false;
+    };
+    let base = super::http::url(provider_base, "");
+    let Ok(base) = reqwest::Url::parse(&base) else {
+        return false;
+    };
+    target.scheme() == base.scheme()
+        && target.host_str() == base.host_str()
+        && target.port_or_known_default() == base.port_or_known_default()
+}
+
+pub async fn cache_live_poster(
+    event: &mut MediaDisplayEvent,
+    settings: &Settings,
+    secrets: &ProviderSecrets,
+    root: &Path,
+) {
+    let Some(remote_url) = event.poster_url.take() else {
+        return;
+    };
+    event.poster_asset_id = None;
+    let source = event.source.as_deref().unwrap_or_default();
+    let verify_tls = settings
+        .providers
+        .get(source)
+        .is_none_or(|provider| provider.verify_tls);
+    let Ok(client) = HttpClient::new(verify_tls) else {
+        return;
+    };
+    let provider_url = settings
+        .providers
+        .get(source)
+        .map(|provider| provider.url.as_str())
+        .unwrap_or_default();
+    let same_origin = same_origin(&remote_url, provider_url);
+    let authorization = secret(secrets, source, "api_key").map(|token| format!("Bearer {token}"));
+    let headers = if same_origin {
+        match source {
+            "jellyfin" => vec![(
+                "X-Emby-Token",
+                secret(secrets, source, "api_key").unwrap_or(""),
+            )],
+            "silo" => authorization
+                .as_deref()
+                .map(|value| vec![("Authorization", value)])
+                .unwrap_or_default(),
+            "radarr" | "sonarr" => vec![(
+                "X-Api-Key",
+                secret(secrets, source, "api_key").unwrap_or(""),
+            )],
+            _ => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+    let Ok(bytes) = client
+        .get_binary(&remote_url, &headers, MAX_POSTER_BYTES)
+        .await
+    else {
+        return;
+    };
+    cache_live_poster_bytes(event, root, &bytes);
+}
+
+pub fn cache_live_poster_bytes(event: &mut MediaDisplayEvent, root: &Path, bytes: &[u8]) {
+    event.poster_url = None;
+    event.poster_asset_id = None;
+    if bytes.len() > MAX_POSTER_BYTES {
+        return;
+    }
+    if aooscope_render::MediaStore::new(root)
+        .and_then(|store| store.upsert(LIVE_POSTER_ASSET_ID, bytes, "live-poster"))
+        .is_ok()
+    {
+        event.poster_asset_id = Some(LIVE_POSTER_ASSET_ID.into());
+        event.poster_url = Some(format!("/api/media/{LIVE_POSTER_ASSET_ID}/file"));
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -568,21 +676,7 @@ pub async fn collect_media_state_with_status(
             }
         }
     }
-    let qbit = states
-        .iter()
-        .find(|state| state.source.as_deref() == Some("qbittorrent"))
-        .cloned();
-    if let Some(qbit) = qbit
-        && let Some(index) = states.iter().position(|state| {
-            matches!(state.source.as_deref(), Some("radarr" | "sonarr"))
-                && state.mode == MediaMode::Incoming
-        })
-    {
-        let merged = merge_incoming(&states[index], &qbit);
-        states[index] = merged;
-        states.retain(|state| state.source.as_deref() != Some("qbittorrent"));
-    }
-    (select_display_event(&states), statuses)
+    (fuse_media_states(states), statuses)
 }
 
 pub async fn collect_media_state(
@@ -594,7 +688,27 @@ pub async fn collect_media_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{arr_queue_path, duration_minutes};
+    use super::{arr_queue_path, duration_minutes, same_origin};
+
+    #[test]
+    fn poster_credentials_are_limited_to_provider_origin() {
+        assert!(same_origin(
+            "https://radarr.example.test/poster/1",
+            "https://radarr.example.test"
+        ));
+        assert!(same_origin(
+            "http://radarr.example.test:7878/poster/1",
+            "radarr.example.test:7878"
+        ));
+        assert!(!same_origin(
+            "https://image.tmdb.org/t/p/original/poster.jpg",
+            "https://radarr.example.test"
+        ));
+        assert!(!same_origin(
+            "https://radarr.example.test.evil.invalid/poster",
+            "https://radarr.example.test"
+        ));
+    }
 
     #[test]
     fn duration_parser_handles_days_and_rounding() {

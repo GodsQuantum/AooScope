@@ -39,6 +39,9 @@ fn binding_value(state: &StateDocument, binding: Option<&str>) -> Value {
         return Value::Null;
     };
     let key = binding.strip_prefix("aooscope_").unwrap_or(binding);
+    if key == "media_display_headline" {
+        return media_headline(state).map_or(Value::Null, Value::String);
+    }
     let mut parts = key.split('_');
     let group = match parts.next() {
         Some("pve") => state.pve.as_ref(),
@@ -65,6 +68,33 @@ fn binding_value(state: &StateDocument, binding: Option<&str>) -> Value {
         .and_then(|value| resolve_path(value, alias))
         .cloned()
         .unwrap_or(Value::Null)
+}
+
+fn media_headline(state: &StateDocument) -> Option<String> {
+    let display = state.media.as_ref()?.get("display")?;
+    let mode = display.get("mode")?.as_str()?;
+    Some(match mode {
+        "incoming" => display
+            .get("eta_minutes")
+            .and_then(Value::as_u64)
+            .map(|minutes| format!("READY IN {minutes} MIN"))
+            .unwrap_or_else(|| "INCOMING".into()),
+        "playing" => display
+            .get("remaining_minutes")
+            .and_then(Value::as_u64)
+            .map(|minutes| format!("{minutes} MIN LEFT"))
+            .or_else(|| {
+                display
+                    .get("progress_pct")
+                    .and_then(Value::as_f64)
+                    .map(|progress| format!("PLAYING {:.0}%", progress))
+            })
+            .unwrap_or_else(|| "PLAYING".into()),
+        "landed" => "JUST LANDED".into(),
+        "idle" => "MEDIA READY".into(),
+        "offline" => "MEDIA OFFLINE".into(),
+        other => other.to_ascii_uppercase(),
+    })
 }
 
 fn resolve_path<'a>(value: &'a Value, parts: &[&str]) -> Option<&'a Value> {

@@ -147,9 +147,16 @@ impl AppState {
                     (Ok(settings), Ok(secrets)) => (settings, secrets),
                     _ => continue,
                 };
-                let (event, statuses) =
+                let (mut event, statuses) =
                     crate::providers::media::collect_media_state_with_status(&settings, &secrets)
                         .await;
+                crate::providers::media::cache_live_poster(
+                    &mut event,
+                    &settings,
+                    &secrets,
+                    &state.paths.root,
+                )
+                .await;
                 if let Err(error) =
                     state.persist_media_snapshot_with_provider_statuses(&event, &statuses)
                 {
