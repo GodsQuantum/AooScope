@@ -1,8 +1,8 @@
 use aooscope_config::AppPaths;
 use aooscope_display::SimulatedDisplayDriver;
 use aooscope_render::{HEIGHT, MediaStore, WIDTH, compile_page};
-use aooscope_server::{AppState, app, bootstrap};
-use aooscope_types::{PagesDocument, StateDocument};
+use aooscope_server::{AppState, app, bootstrap, storage, templates};
+use aooscope_types::{PagesDocument, StateDocument, validate_document};
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -18,6 +18,132 @@ fn root(name: &str) -> PathBuf {
         "aooscope-bootstrap-{name}-{}",
         uuid::Uuid::new_v4()
     ))
+}
+
+fn storage_device(index: usize) -> storage::StorageDevice {
+    storage::StorageDevice {
+        index,
+        path: format!("/dev/disk{index}"),
+        label: format!("Disk {index}"),
+        kind: "disk".into(),
+        total_bytes: 1_000,
+        used_bytes: Some(680),
+        free_bytes: Some(320),
+        usage_pct: Some(68.0),
+        temperature_c: Some(68.0),
+        health: Some("PASSED".into()),
+    }
+}
+
+#[test]
+fn storage_templates_chunk_devices_with_stable_ids_and_bounded_layers() {
+    for (count, expected_pages) in [(0, 0), (1, 1), (4, 1), (6, 1), (8, 2), (10, 2)] {
+        let devices = (0..count).map(storage_device).collect::<Vec<_>>();
+        let pages = templates::storage_pages(&devices);
+        assert_eq!(pages.len(), expected_pages, "{count} devices");
+        assert_eq!(
+            pages
+                .iter()
+                .map(|page| page.id.as_str())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            pages.len(),
+            "{count} device page ids"
+        );
+        assert_eq!(
+            pages
+                .iter()
+                .map(|page| page.id.as_str())
+                .collect::<Vec<_>>(),
+            (0..expected_pages)
+                .map(|index| if index == 0 {
+                    "page-storage".into()
+                } else {
+                    format!("page-storage-{}", index + 1)
+                })
+                .collect::<Vec<String>>()
+        );
+        let document = PagesDocument {
+            schema_version: 1,
+            revision: 1,
+            carousel: pages.iter().map(|page| page.id.clone()).collect(),
+            pages: pages
+                .iter()
+                .map(|page| (page.id.clone(), page.clone()))
+                .collect(),
+            extra: Default::default(),
+        };
+        validate_document(&document).unwrap_or_else(|issues| panic!("{count}: {issues:?}"));
+        for page in pages {
+            assert_eq!((WIDTH as i32, HEIGHT as i32), (960, 376));
+            for layer in page.layers {
+                assert!(
+                    layer.x >= 0 && layer.y >= 0,
+                    "{}: negative bounds",
+                    layer.id
+                );
+                assert!(
+                    layer.x + layer.width as i32 <= WIDTH as i32,
+                    "{}: right overflow",
+                    layer.id
+                );
+                assert!(
+                    layer.y + layer.height as i32 <= HEIGHT as i32,
+                    "{}: bottom overflow",
+                    layer.id
+                );
+                if layer.layer_type == "bar" {
+                    assert_eq!(
+                        layer.binding.as_deref(),
+                        Some(
+                            format!(
+                                "aooscope_pve_disks_{}_usage_pct",
+                                layer.id.strip_prefix("storage-bar-").unwrap()
+                            )
+                            .as_str()
+                        )
+                    );
+                    assert!(layer.height <= 12, "{}: capacity bar is not thin", layer.id);
+                    assert_eq!(layer.extra.get("format"), None, "bars do not format text");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn generic_factory_template_ids_are_available() {
+    for template in [
+        "factory.vertical-bars.v1",
+        "factory.semi-rings.v1",
+        "factory.horizontal-bars.v1",
+    ] {
+        let page = templates::factory_page(template, "page-template").unwrap();
+        assert_eq!(page.template_id.as_deref(), Some(template));
+        assert!(!page.layers.is_empty());
+    }
+}
+
+#[test]
+fn storage_cards_format_capacity_values_as_human_bytes() {
+    let page = templates::storage_pages(&[storage_device(0)]).remove(0);
+    for id in ["storage-used-0", "storage-total-0"] {
+        let layer = page.layers.iter().find(|layer| layer.id == id).unwrap();
+        assert_eq!(layer.extra.get("format"), Some(&json!("bytes")), "{id}");
+    }
+    assert!(page.layers.iter().any(|layer| {
+        layer.id == "storage-separator-0" && layer.extra.get("text") == Some(&json!("/"))
+    }));
+    let usage = page
+        .layers
+        .iter()
+        .find(|layer| layer.id == "storage-usage-0")
+        .expect("visible usage percentage");
+    assert_eq!(
+        usage.binding.as_deref(),
+        Some("aooscope_pve_disks_0_usage_pct")
+    );
+    assert_eq!(usage.extra.get("unit"), Some(&json!("%")));
 }
 
 async fn status(app: &axum::Router, path: &str) -> StatusCode {
@@ -69,7 +195,7 @@ async fn empty_root_bootstraps_all_simulated_api_reads() {
     for (id, template, enabled) in [
         ("page-splash", "factory.splash.v1", true),
         ("page-home", "factory.home.v1", true),
-        ("page-storage", "factory.storage.v1", true),
+        ("page-storage", "factory.storage.v1", false),
         ("page-storage-m2", "factory.storage-m2.v1", false),
         ("page-compute", "factory.compute.v1", true),
         ("page-media", "factory.media.v1", true),
@@ -103,6 +229,45 @@ async fn empty_root_bootstraps_all_simulated_api_reads() {
             .mode()
             & 0o777,
         0o600
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn bootstrap_generates_storage_pages_from_available_state() {
+    let root = root("adaptive-storage");
+    let paths = AppPaths::new(&root);
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        paths.state(),
+        serde_json::to_vec(&json!({
+            "pve": {"disks": (0..8).map(|index| json!({"name": format!("Disk {index}")})).collect::<Vec<_>>()}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    bootstrap(&paths).unwrap();
+    let pages: PagesDocument = serde_json::from_slice(&fs::read(paths.pages()).unwrap()).unwrap();
+    assert_eq!(
+        pages.carousel,
+        [
+            "page-splash",
+            "page-home",
+            "page-storage",
+            "page-storage-2",
+            "page-storage-m2",
+            "page-compute",
+            "page-media"
+        ]
+    );
+    assert!(pages.pages["page-storage"].enabled);
+    assert!(pages.pages["page-storage-2"].enabled);
+    assert!(
+        pages.pages["page-storage-2"]
+            .layers
+            .iter()
+            .any(|layer| layer.binding.as_deref() == Some("aooscope_pve_disks_7_usage_pct"))
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -165,8 +330,12 @@ fn factory_templates_are_deterministic_native_and_complete() {
         "pve": {
             "cpu_pct": 37, "memory_pct": 62, "guests_running": 8,
             "disks": [
-                {"name":"SATA-A"},{"name":"SATA-B"},{"name":"SATA-C"},
-                {"name":"SATA-D"},{"name":"SATA-E"},{"name":"SATA-F"}
+                {"name":"SATA-A","size_bytes":6000000000000u64,"used_bytes":4080000000000u64,"free_bytes":1920000000000u64,"usage_pct":68},
+                {"name":"SATA-B","size_bytes":6000000000000u64,"used_bytes":3300000000000u64,"free_bytes":2700000000000u64,"usage_pct":55},
+                {"name":"SATA-C","size_bytes":4000000000000u64,"used_bytes":2840000000000u64,"free_bytes":1160000000000u64,"usage_pct":71},
+                {"name":"SATA-D","size_bytes":3000000000000u64,"used_bytes":1170000000000u64,"free_bytes":1830000000000u64,"usage_pct":39},
+                {"name":"SATA-E","size_bytes":2000000000000u64,"used_bytes":1520000000000u64,"free_bytes":480000000000u64,"usage_pct":76},
+                {"name":"SATA-F","size_bytes":1000000000000u64,"used_bytes":420000000000u64,"free_bytes":580000000000u64,"usage_pct":42}
             ],
             "smart": [
                 {"temperature_c":31,"health":"PASSED"},{"temperature_c":34,"health":"PASSED"},
@@ -186,7 +355,7 @@ fn factory_templates_are_deterministic_native_and_complete() {
     let expected = [
         ("page-splash", "factory.splash.v1", true),
         ("page-home", "factory.home.v1", true),
-        ("page-storage", "factory.storage.v1", true),
+        ("page-storage", "factory.storage.v1", false),
         ("page-storage-m2", "factory.storage-m2.v1", false),
         ("page-compute", "factory.compute.v1", true),
         ("page-media", "factory.media.v1", true),
@@ -203,7 +372,7 @@ fn factory_templates_are_deterministic_native_and_complete() {
         assert_eq!(carousel_id, id);
         let page = &pages.pages[id];
         assert_eq!(page.template_id.as_deref(), Some(template));
-        assert_eq!(page.enabled, enabled);
+        assert_eq!(page.enabled, enabled, "{id}");
         assert!(!page.layers.is_empty());
         let bindings = page
             .layers
@@ -227,7 +396,7 @@ fn factory_templates_are_deterministic_native_and_complete() {
         [
             11145793668765435691,
             3933230600154408341,
-            15626337787405951578,
+            10264025068728205431,
             1848912279559255029,
             4505336165427745734,
             9091733769383410979,
@@ -273,6 +442,9 @@ fn expected_bindings(id: &str) -> BTreeSet<String> {
             .flat_map(|index| {
                 [
                     format!("aooscope_pve_disks_{index}_name"),
+                    format!("aooscope_pve_disks_{index}_used_bytes"),
+                    format!("aooscope_pve_disks_{index}_size_bytes"),
+                    format!("aooscope_pve_disks_{index}_usage_pct"),
                     format!("aooscope_pve_smart_{index}_temperature_c"),
                     format!("aooscope_pve_smart_{index}_health"),
                 ]

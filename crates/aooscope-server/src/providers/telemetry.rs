@@ -32,8 +32,17 @@ pub fn normalize_proxmox(value: &Value) -> Value {
         "guests_running": guests.iter().filter(|guest| guest.get("status").and_then(Value::as_str) == Some("running")).count(),
         "guests_total": guests.len(),
         "disks": disks.iter().map(|disk| {
-            let used = disk.get("used").and_then(Value::as_f64);
-            let avail = disk.get("avail").and_then(Value::as_f64);
+            let size_value = disk.get("size").cloned().unwrap_or(Value::Null);
+            let used_value = disk.get("used").cloned().unwrap_or(Value::Null);
+            let avail_value = disk.get("avail").cloned().unwrap_or_else(|| {
+                disk.get("size").and_then(Value::as_u64)
+                    .zip(disk.get("used").and_then(Value::as_u64))
+                    .and_then(|(size, used)| size.checked_sub(used))
+                    .map(|free| json!(free))
+                    .unwrap_or(Value::Null)
+            });
+            let used = used_value.as_f64();
+            let avail = avail_value.as_f64();
             let usage_pct = disk.get("usage_pct").cloned().or_else(|| {
                 used.zip(avail).and_then(|(used, avail)| {
                     let total = used + avail;
@@ -44,10 +53,13 @@ pub fn normalize_proxmox(value: &Value) -> Value {
                 "name": disk.get("model").or_else(|| disk.get("devpath")).cloned().unwrap_or(Value::Null),
                 "path": disk.get("devpath"),
                 "health": disk.get("health"),
-                "size": disk.get("size"),
+                "size": size_value,
+                "size_bytes": size_value,
                 "type": disk.get("type"),
-                "used": disk.get("used"),
-                "avail": disk.get("avail"),
+                "used": used_value,
+                "used_bytes": used_value,
+                "avail": avail_value,
+                "free_bytes": avail_value,
                 "usage_pct": usage_pct
             })
         }).collect::<Vec<_>>(),
@@ -519,6 +531,9 @@ mod tests {
         assert_eq!(value["disks"][0]["used"], 250);
         assert_eq!(value["disks"][0]["avail"], 750);
         assert_eq!(value["disks"][0]["usage_pct"], 25.0);
+        assert_eq!(value["disks"][0]["size_bytes"], 1_000);
+        assert_eq!(value["disks"][0]["used_bytes"], 250);
+        assert_eq!(value["disks"][0]["free_bytes"], 750);
     }
 
     #[test]

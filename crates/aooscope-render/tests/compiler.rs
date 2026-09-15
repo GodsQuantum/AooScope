@@ -192,6 +192,58 @@ fn vertical_bar_fills_from_the_bottom() {
 }
 
 #[test]
+fn horizontal_storage_bar_uses_usage_not_temperature() {
+    let root = temp_root("horizontal-storage-bar");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"storage", "name":"Storage", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#071019"},
+        "layers":[
+            {"id":"bar","type":"bar","binding":"aooscope_pve_disks_0_usage_pct","x":10,"y":10,"width":200,"height":8,"z":1,"color":"#35d9ff","track_color":"#1a2a39","radius":4},
+            {"id":"temperature","type":"value","binding":"aooscope_pve_smart_0_temperature_c","x":10,"y":30,"width":100,"height":20,"z":1}
+        ]
+    })).unwrap();
+    let state = StateDocument {
+        pve: Some(json!({
+            "disks":[{"usage_pct":68.0}],
+            "smart":[{"temperature_c":20.0}]
+        })),
+        ..Default::default()
+    };
+    let image = compile_page(&page, &state, &media, 100, 0.0).unwrap().image;
+    let fill = (0..200)
+        .filter(|offset| image.get_pixel(10 + offset, 13).0 == [53, 217, 255])
+        .count();
+    assert!((130..=140).contains(&fill), "usage fill length: {fill}");
+    assert_eq!(image.get_pixel(10 + 150, 13).0, [26, 42, 57]);
+}
+
+#[test]
+fn storage_byte_bindings_resolve_canonical_normalized_fields() {
+    let root = temp_root("storage-byte-bindings");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"storage-bytes", "name":"Storage bytes", "enabled":true, "duration":8, "revision":1,
+        "background":{"color":"#071019"},
+        "layers":[
+            {"id":"used","type":"value","binding":"aooscope_pve_disks_0_used_bytes","x":20,"y":20,"width":160,"height":30,"z":1,"color":"#ffffff","format":"bytes","font_size":22},
+            {"id":"total","type":"value","binding":"aooscope_pve_disks_0_size_bytes","x":200,"y":20,"width":160,"height":30,"z":1,"color":"#ffffff","format":"bytes","font_size":22}
+        ]
+    })).unwrap();
+    let state = StateDocument {
+        pve: Some(
+            json!({"disks":[{"used_bytes":4_080_000_000_000u64,"size_bytes":6_000_000_000_000u64}]}),
+        ),
+        ..Default::default()
+    };
+    let populated = compile_page(&page, &state, &media, 100, 0.0).unwrap().image;
+    let empty = compile_page(&page, &StateDocument::default(), &media, 100, 0.0)
+        .unwrap()
+        .image;
+    assert_ne!(populated.as_raw(), empty.as_raw());
+}
+
+#[test]
 fn gauges_and_bars_use_rounded_geometry() {
     let root = temp_root("rounded-primitives");
     let media = aooscope_render::MediaStore::new(&root).unwrap();
