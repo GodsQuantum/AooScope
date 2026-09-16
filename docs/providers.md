@@ -2,6 +2,8 @@
 
 Providers are optional. AooScope works with local Linux/sysfs information even when no external service is configured.
 
+Local hardware temperatures prefer Linux thermal zones and fall back to standard `hwmon` sensors (`k10temp`, `coretemp`, `zenpower`, `amdgpu`/`radeon`) when thermal zones are not exposed by the host or container.
+
 ## Runtime providers
 
 | Provider | Current use | Recommended credential |
