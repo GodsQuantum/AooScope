@@ -113,7 +113,7 @@ pub fn normalize_local_sysfs(temperatures: &[(&str, &str)], gpu: &[(&str, &str)]
         temperatures
             .iter()
             .find(|(key, _)| *key == name)
-            .and_then(|(_, value)| value.parse::<f64>().ok())
+            .and_then(|(_, value)| value.trim().parse::<f64>().ok())
             .map(|value| value / 1000.0)
     };
     let number = |name: &str| {
@@ -837,6 +837,13 @@ mod tests {
                 .any(|(key, value)| key == "gpu" && value.trim() == "63000")
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn local_sysfs_normalization_accepts_sysfs_newlines() {
+        let value = normalize_local_sysfs(&[("cpu", "52000\n"), ("gpu", "61000\n")], &[]);
+        assert_eq!(value["cpu_temp_c"], 52.0);
+        assert_eq!(value["gpu_temp_c"], 61.0);
     }
 
     #[test]
