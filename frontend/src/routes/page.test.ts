@@ -36,6 +36,13 @@ function initial(path: string) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('admin page persistence', () => {
+  it('uses the configured display brand as the studio name', async () => {
+    const fetchMock = vi.fn(async (path: string) => response(path === '/api/settings' ? { display: { brand: 'Demo Rack' }, providers: {} } : initial(path)));
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Demo Rack' })).toBeTruthy();
+  });
+
   it('makes unsaved page state visible and clears it after saving', async () => {
     let pagesGets = 0;
     const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
@@ -233,7 +240,7 @@ describe('admin page persistence', () => {
       const method = options.method ?? 'GET'; const body = options.body ? JSON.parse(String(options.body)) : undefined;
       if (method !== 'GET') writes.push({ path, body });
       if (path === '/api/pages' && ++pagesGets > 1) return response({ ...initial(path), revision: 8, pages: [summary(home), { ...summary(splash), revision: 3 }] });
-      if (path === '/api/media/presets/orbit') return response({ id: 'orbit', name: 'Orbit', source_asset_id: 'logo', settings: { fps: 24, speed_seconds: 4 } });
+      if (path === '/api/media/presets/splash') return response({ id: 'splash', name: 'Splash', source_asset_id: 'logo', settings: { fps: 8, speed_seconds: 4, fit: 'contain', align: 'center', valign: 'center' } });
       if (path === '/api/pages/splash') return response({ ...splash, revision: 3 });
       if (path === '/api/carousel') return response({ ok: true, revision: 9 });
       return response(initial(path));
@@ -245,7 +252,7 @@ describe('admin page persistence', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
     await fireEvent.change(screen.getByRole('combobox', { name: 'Splash source' }), { target: { value: 'logo' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Use as splash' }));
-    await waitFor(() => expect(writes.map(({ path }) => path)).toEqual(['/api/media/presets/orbit', '/api/carousel', '/api/apply']));
+    await waitFor(() => expect(writes.map(({ path }) => path)).toEqual(['/api/media/presets/splash', '/api/carousel', '/api/apply']));
     expect(writes[1].body).toMatchObject({ revision: 8, items: [expect.objectContaining({ id: 'home', duration: 15 }), expect.anything()] });
   });
 
@@ -253,7 +260,7 @@ describe('admin page persistence', () => {
     let resolveOrbit!: (value: ReturnType<typeof response>) => void;
     const orbit = new Promise<ReturnType<typeof response>>((resolve) => { resolveOrbit = resolve; });
     const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
-      if (path === '/api/media/presets/orbit') return orbit;
+      if (path === '/api/media/presets/splash') return orbit;
       if (path === '/api/carousel') return response({ ok: true, revision: 9 });
       return response(initial(path));
     });
@@ -263,10 +270,10 @@ describe('admin page persistence', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Media$/ }));
     await fireEvent.change(screen.getByRole('combobox', { name: 'Splash source' }), { target: { value: 'logo' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Use as splash' }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/media/presets/orbit', expect.objectContaining({ method: 'POST' })));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/media/presets/splash', expect.objectContaining({ method: 'POST' })));
     await fireEvent.click(screen.getByRole('button', { name: /Pages$/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Home Revision 3' }));
-    resolveOrbit(response({ id: 'orbit', name: 'Orbit', source_asset_id: 'logo', settings: { fps: 24, speed_seconds: 4 } }));
+    resolveOrbit(response({ id: 'splash', name: 'Splash', source_asset_id: 'logo', settings: { fps: 8, speed_seconds: 4, fit: 'contain', align: 'center', valign: 'center' } }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/apply', expect.objectContaining({ method: 'POST' })));
     expect(screen.getByText('Home', { selector: 'h2' })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalledWith('/api/pages/splash', expect.anything());
@@ -277,7 +284,7 @@ describe('admin page persistence', () => {
     const splashLoad = new Promise<ReturnType<typeof response>>((resolve) => { resolveSplash = resolve; });
     const previewPages: typeof home[] = [];
     const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
-      if (path === '/api/media') return response({ assets: [{ id: 'logo', name: 'Logo' }], presets: [{ id: 'orbit', name: 'Orbit', source_asset_id: 'logo', settings: { fps: 24, speed_seconds: 4 } }] });
+      if (path === '/api/media') return response({ assets: [{ id: 'logo', name: 'Logo' }], presets: [{ id: 'splash', name: 'Splash', source_asset_id: 'logo', settings: { fps: 8, speed_seconds: 4, fit: 'contain', align: 'center', valign: 'center' } }] });
       if (path === '/api/pages/splash') return splashLoad;
       if (path === '/api/preview') {
         previewPages.push(JSON.parse(String(options.body)).page);

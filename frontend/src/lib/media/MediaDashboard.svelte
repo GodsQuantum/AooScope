@@ -1,8 +1,8 @@
 <script lang="ts">
   import MediaCard from './MediaCard.svelte';
-  import MediaLibrary, { type Preset } from './MediaLibrary.svelte';
+  import MediaLibrary, { type Asset, type Preset } from './MediaLibrary.svelte';
   type Event = { mode?: 'playing'|'incoming'|'landed'|'offline'|'idle'; title?: string; poster_url?: string; poster_asset_id?: string; progress_pct?: number; remaining_minutes?: number; eta_minutes?: number; speed_bytes_s?: number; provider_chain?: string[] };
-  let { event = {}, assets = [], presets = [], onorbit, onpreview, onupload, onreplace, ondelete }: { event?: Event; assets?: { id: string; name: string; kind?: string; format?: string; revision?: number; width?: number; height?: number }[]; presets?: Preset[]; onorbit: (sourceAssetId: string, displayName?: string) => void; onpreview: () => void; onupload?: (files: File[]) => void; onreplace?: (id: string, file: File) => void; ondelete?: (id: string) => void } = $props();
+  let { event = {}, assets = [], presets = [], onorbit, onpreview, onupload, onreplace, ondelete, onadd }: { event?: Event; assets?: Asset[]; presets?: Preset[]; onorbit: (sourceAssetId: string, displayName?: string, layout?: { fit: string; align: string; valign: string }) => void; onpreview: () => void; onupload?: (files: File[]) => void; onreplace?: (id: string, file: File) => void; ondelete?: (id: string) => void; onadd?: (asset: Asset) => void } = $props();
   const mode = $derived(event.mode ?? 'offline');
   const heading = $derived(mode === 'playing' ? 'Lecture en cours' : mode === 'incoming' ? 'Téléchargement en cours' : mode === 'landed' ? 'Récemment arrivé' : mode === 'idle' ? 'Média inactif' : 'Sources média hors ligne');
   const status = $derived(mode === 'incoming' && event.eta_minutes !== undefined ? `READY IN ${event.eta_minutes} MIN` : mode === 'playing' && event.remaining_minutes !== undefined ? `${event.remaining_minutes} MIN LEFT` : mode === 'landed' ? 'JUST LANDED' : mode === 'idle' ? 'MEDIA READY' : mode === 'offline' ? 'MEDIA OFFLINE' : mode.toUpperCase());
@@ -10,16 +10,5 @@
   const poster = $derived(event.poster_asset_id ? `/api/media/${event.poster_asset_id}/file` : event.poster_url);
   const compact = $derived(mode === 'offline' || mode === 'idle');
 </script>
-<section class="dashboard">
-  <div class="live">
-    {#if compact}
-      <div class="empty-live" data-testid="media-empty-state"><i aria-hidden="true"></i><div><span>Live media</span><h2>{heading}</h2><p>{detail}</p></div><strong role="status">{status}</strong></div>
-    {:else}
-      <div class="playing"><span>Live</span><h2>{heading}</h2><MediaCard title={event.title ?? 'Aucune activité'} {detail} {status} {poster} progress={event.progress_pct} /></div>
-    {/if}
-  </div>
-  <MediaLibrary {assets} {presets} {onorbit} {onpreview} {onupload} {onreplace} {ondelete} />
-</section>
-<style>
-  .dashboard{display:grid;gap:18px}.live{display:grid}.playing{display:grid;gap:8px;padding:15px;border:1px solid #263f52;border-radius:16px;background:linear-gradient(145deg,#0d1c29,#09151f);box-shadow:0 14px 34px #0003}.playing>span,.empty-live span{color:#35d9ff;font-size:.65rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.dashboard h2{margin:0}.empty-live{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:14px 16px;border:1px solid #263f52;border-radius:14px;background:#091722}.empty-live i{width:12px;height:12px;border-radius:50%;background:#526b79;box-shadow:0 0 0 5px #526b7918}.empty-live h2{margin:2px 0;font-size:1rem}.empty-live p{margin:0;color:#8198a6;font-size:.75rem}.empty-live strong{padding:6px 9px;border:1px solid #405361;border-radius:999px;color:#9eb1bc;background:#0d1b25;font-size:.68rem;letter-spacing:.06em}@media(max-width:620px){.empty-live{grid-template-columns:auto 1fr}.empty-live strong{grid-column:2;justify-self:start}}
-</style>
+<section class="dashboard"><div class="live">{#if compact}<div class="empty-live" data-testid="media-empty-state"><i aria-hidden="true"></i><div><span>Live media</span><h2>{heading}</h2><p>{detail}</p></div><strong role="status">{status}</strong></div>{:else}<div class="playing"><span>Live</span><h2>{heading}</h2><MediaCard title={event.title ?? 'Aucune activité'} {detail} {status} {poster} progress={event.progress_pct} /></div>{/if}</div><MediaLibrary {assets} {presets} {onorbit} {onpreview} {onupload} {onreplace} {ondelete} {onadd} /></section>
+<style>.dashboard{display:grid;gap:18px}.live{display:grid}.playing{display:grid;gap:8px;padding:15px;border:1px solid #263f52;border-radius:16px;background:linear-gradient(145deg,#0d1c29,#09151f);box-shadow:0 14px 34px #0003}.playing>span,.empty-live span{color:#35d9ff;font-size:.65rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.dashboard h2{margin:0}.empty-live{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:14px 16px;border:1px solid #263f52;border-radius:14px;background:#091722}.empty-live i{width:12px;height:12px;border-radius:50%;background:#526b79;box-shadow:0 0 0 5px #526b7918}.empty-live h2{margin:2px 0;font-size:1rem}.empty-live p{margin:0;color:#8198a6;font-size:.75rem}.empty-live strong{padding:6px 9px;border:1px solid #405361;border-radius:999px;color:#9eb1bc;background:#0d1b25;font-size:.68rem;letter-spacing:.06em}@media(max-width:620px){.empty-live{grid-template-columns:auto 1fr}.empty-live strong{grid-column:2;justify-self:start}}</style>

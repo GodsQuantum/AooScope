@@ -117,6 +117,123 @@ impl MediaStore {
         Ok(preset)
     }
 
+    pub fn ensure_splash(
+        &self,
+        source_asset_id: &str,
+        display_name: Option<&str>,
+        fit: &str,
+        align: &str,
+        valign: &str,
+    ) -> Result<MediaPreset, MediaError> {
+        if !matches!(fit, "contain" | "cover" | "stretch")
+            || !matches!(align, "left" | "center" | "right")
+            || !matches!(valign, "top" | "center" | "bottom")
+        {
+            return Err(MediaError::Invalid("invalid splash layout".into()));
+        }
+        let mut document = self.load()?;
+        document
+            .assets
+            .get(source_asset_id)
+            .ok_or_else(|| MediaError::NotFound(source_asset_id.into()))?;
+        let settings = [
+            ("fit".into(), Value::from(fit)),
+            ("align".into(), Value::from(align)),
+            ("valign".into(), Value::from(valign)),
+            ("fps".into(), Value::from(8)),
+            ("speed_seconds".into(), Value::from(4)),
+        ]
+        .into_iter()
+        .collect();
+        let preset = MediaPreset {
+            id: "splash".into(),
+            name: display_name.unwrap_or("Splash").into(),
+            source_asset_id: source_asset_id.into(),
+            settings,
+            extra: Default::default(),
+        };
+        document.presets.remove("orbit");
+        document.presets.insert(preset.id.clone(), preset.clone());
+        self.save(&document)?;
+        Ok(preset)
+    }
+
+    pub fn migrate_splash_media(
+        pages: &mut PagesDocument,
+        preset: &MediaPreset,
+        animated: bool,
+        aspect_ratio: f64,
+    ) -> bool {
+        let Some(page) = pages
+            .pages
+            .values_mut()
+            .find(|page| page.template_id.as_deref() == Some("factory.splash.v1"))
+        else {
+            return false;
+        };
+        let original = page.layers.clone();
+        page.layers.retain(|layer| {
+            layer.id != "splash-orbit"
+                && layer.id != "splash-media"
+                && !matches!(
+                    layer.extra.get("preset_id").and_then(Value::as_str),
+                    Some("orbit" | "splash")
+                )
+        });
+        page.layers.push(Layer {
+            id: "splash-media".into(),
+            layer_type: if animated { "animation" } else { "image" }.into(),
+            binding: None,
+            x: 0,
+            y: 0,
+            width: 960,
+            height: 376,
+            z: 1,
+            opacity: 1.0,
+            clip: false,
+            extra: [
+                (
+                    "asset_id".into(),
+                    Value::from(preset.source_asset_id.as_str()),
+                ),
+                ("preset_id".into(), Value::from("splash")),
+                (
+                    "fit".into(),
+                    preset
+                        .settings
+                        .get("fit")
+                        .cloned()
+                        .unwrap_or_else(|| Value::from("contain")),
+                ),
+                (
+                    "align".into(),
+                    preset
+                        .settings
+                        .get("align")
+                        .cloned()
+                        .unwrap_or_else(|| Value::from("center")),
+                ),
+                (
+                    "valign".into(),
+                    preset
+                        .settings
+                        .get("valign")
+                        .cloned()
+                        .unwrap_or_else(|| Value::from("center")),
+                ),
+                ("lock_aspect".into(), Value::from(true)),
+                ("aspect_ratio".into(), Value::from(aspect_ratio)),
+            ]
+            .into_iter()
+            .collect(),
+        });
+        if page.layers == original {
+            return false;
+        }
+        page.revision += 1;
+        true
+    }
+
     pub fn migrate_splash(pages: &mut PagesDocument, preset: &MediaPreset) -> bool {
         let Some(page) = pages
             .pages
@@ -287,27 +404,68 @@ impl MediaStore {
         Ok(asset)
     }
 
-    pub fn delete(&self, id: &str, pages: &PagesDocument) -> Result<(), MediaError> {
+    pub fn usage(&self, id: &str, pages: &PagesDocument) -> Result<Vec<String>, MediaError> {
+        self.get(id)?;
+        let document = self.load()?;
+        let mut usage = Vec::new();
+        for page in pages.pages.values() {
+            if page.layers.iter().any(|layer| {
+                serde_json::to_value(layer)
+                    .ok()
+                    .is_some_and(|value| references_asset(&value, id))
+            }) {
+                usage.push(format!("Page: {}", page.name));
+            }
+        }
+        for preset in document.presets.values() {
+            if preset.source_asset_id == id {
+                usage.push(format!("Preset: {}", preset.name));
+            }
+        }
+        Ok(usage)
+    }
+
+    pub fn detach_pages(pages: &mut PagesDocument, id: &str) -> Vec<String> {
+        let mut changed = Vec::new();
+        for page in pages.pages.values_mut() {
+            let before = page.layers.len();
+            page.layers.retain(|layer| {
+                !serde_json::to_value(layer)
+                    .ok()
+                    .is_some_and(|value| references_asset(&value, id))
+            });
+            if page.layers.len() != before {
+                page.revision += 1;
+                changed.push(page.name.clone());
+            }
+        }
+        if !changed.is_empty() {
+            pages.revision += 1;
+        }
+        changed
+    }
+
+    pub fn force_delete(&self, id: &str) -> Result<(), MediaError> {
         let mut document = self.load()?;
         let asset = document
             .assets
             .get(id)
             .cloned()
             .ok_or_else(|| MediaError::NotFound(id.into()))?;
-        let pages_value = serde_json::to_value(pages)
-            .map_err(|e| MediaError::Invalid(format!("cannot inspect pages: {e}")))?;
-        if references_asset(&pages_value, id)
-            || document
-                .presets
-                .values()
-                .any(|preset| preset.source_asset_id == id)
-        {
-            return Err(MediaError::InUse(id.into()));
-        }
+        document
+            .presets
+            .retain(|_, preset| preset.source_asset_id != id);
         document.assets.remove(id);
         self.save(&document)?;
         let _ = fs::remove_file(self.media_root.join(asset.stored_name));
         Ok(())
+    }
+
+    pub fn delete(&self, id: &str, pages: &PagesDocument) -> Result<(), MediaError> {
+        if !self.usage(id, pages)?.is_empty() {
+            return Err(MediaError::InUse(id.into()));
+        }
+        self.force_delete(id)
     }
 }
 
