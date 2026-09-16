@@ -82,6 +82,10 @@ pub fn normalize_proxmox(value: &Value) -> Value {
                     .get("path")
                     .or_else(|| disk.get("devpath"))
                     .or_else(|| disk.get("id")),
+                "devpath": disk
+                    .get("devpath")
+                    .or_else(|| disk.get("path"))
+                    .or_else(|| disk.get("id")),
                 "health": disk.get("health"),
                 "size": size_value,
                 "size_bytes": size_value,
@@ -230,11 +234,15 @@ async fn provider_json(
         .map_err(|error| error.to_string())
 }
 
+fn disk_data_if_valid(value: &Value) -> Option<Vec<Value>> {
+    value.get("data").and_then(Value::as_array).cloned()
+}
+
 async fn collect_proxmox(
     settings: &Settings,
     secrets: &ProviderSecrets,
     paths: Option<&AppPaths>,
-) -> Result<Value, String> {
+) -> Result<(Value, bool), String> {
     let config = configured(settings, "proxmox").ok_or_else(|| "not configured".to_owned())?;
     let node = config
         .node
@@ -275,14 +283,26 @@ async fn collect_proxmox(
         )
         .await
         .unwrap_or(json!([]));
-    let disks = client
+    let disks_result = client
         .get_json(
             &config.url,
-            &format!("/api2/json/nodes/{node}/disks/list"),
+            &format!("/api2/json/nodes/{node}/disks/list?skipsmart=1"),
             &headers,
         )
-        .await
-        .unwrap_or(json!([]));
+        .await;
+    let (disk_data, mut storage_fresh) = match disks_result {
+        Ok(disks) => match disk_data_if_valid(&disks) {
+            Some(data) => (data, true),
+            None => {
+                tracing::warn!("proxmox disk inventory returned an invalid payload");
+                (Vec::new(), false)
+            }
+        },
+        Err(error) => {
+            tracing::warn!(%error, "proxmox disk inventory temporarily unavailable");
+            (Vec::new(), false)
+        }
+    };
     let mut guests = qemu
         .get("data")
         .and_then(Value::as_array)
@@ -294,31 +314,105 @@ async fn collect_proxmox(
             .cloned()
             .unwrap_or_default(),
     );
-    let disk_data = disks
-        .get("data")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
     let mut smart = Vec::with_capacity(disk_data.len());
     for disk in &disk_data {
-        let value = if let Some(devpath) = disk.get("devpath").and_then(Value::as_str)
-            && let Ok(value) = client
+        let (value, fresh) = if let Some(devpath) = disk.get("devpath").and_then(Value::as_str) {
+            match client
                 .get_json(
                     &config.url,
                     &format!("/api2/json/nodes/{node}/disks/smart?disk={devpath}"),
                     &headers,
                 )
                 .await
-        {
-            value.get("data").cloned().unwrap_or(value)
+            {
+                Ok(value) => (value.get("data").cloned().unwrap_or(value), true),
+                Err(error) => {
+                    tracing::warn!(%error, %devpath, "proxmox SMART probe temporarily unavailable");
+                    (Value::Null, false)
+                }
+            }
         } else {
-            Value::Null
+            (Value::Null, false)
         };
+        storage_fresh &= fresh;
         smart.push(value);
     }
-    Ok(normalize_proxmox(
+    let mut normalized = normalize_proxmox(
         &json!({"status": status.get("data").cloned().unwrap_or(status), "guests": guests, "disks": disk_data, "smart": smart}),
-    ))
+    );
+    if storage_fresh {
+        apply_host_storage_overlay(&mut normalized, paths);
+    }
+    Ok((normalized, storage_fresh))
+}
+
+fn apply_host_storage_overlay(pve: &mut Value, paths: Option<&AppPaths>) {
+    let Some(paths) = paths else {
+        return;
+    };
+    let path = paths.root.join("private/host-storage.json");
+    let Ok(bytes) = fs::read(&path) else {
+        return;
+    };
+    let Ok(overlay) = serde_json::from_slice::<Value>(&bytes) else {
+        tracing::warn!(path = %path.display(), "invalid host storage overlay");
+        return;
+    };
+    let Some(devices) = overlay.get("devices").and_then(Value::as_array) else {
+        return;
+    };
+    let Some(disks) = pve.get_mut("disks").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for disk in disks {
+        let Some(devpath) = disk.get("devpath").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(source) = devices
+            .iter()
+            .find(|item| item.get("devpath").and_then(Value::as_str) == Some(devpath))
+        else {
+            continue;
+        };
+        let Some(target) = disk.as_object_mut() else {
+            continue;
+        };
+        let original_name = target.get("name").cloned();
+        for key in [
+            "filesystem_label",
+            "mountpoint",
+            "size",
+            "used",
+            "avail",
+            "usage_pct",
+        ] {
+            if let Some(value) = source.get(key).filter(|value| !value.is_null()) {
+                target.insert(key.to_owned(), value.clone());
+            }
+        }
+        if let Some(display_name) = source
+            .get("display_name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            if !target.contains_key("model")
+                && let Some(model) = original_name.filter(|value| !value.is_null())
+            {
+                target.insert("model".into(), model);
+            }
+            target.insert("display_name".into(), Value::from(display_name));
+            target.insert("name".into(), Value::from(display_name));
+        }
+        if let Some(value) = target.get("size").cloned() {
+            target.insert("size_bytes".into(), value);
+        }
+        if let Some(value) = target.get("used").cloned() {
+            target.insert("used_bytes".into(), value);
+        }
+        if let Some(value) = target.get("avail").cloned() {
+            target.insert("free_bytes".into(), value);
+        }
+    }
 }
 
 fn local_sysfs() -> Value {
@@ -493,9 +587,11 @@ pub async fn collect_telemetry_state_with_paths(
     providers.insert("local", status(true, true, None));
     if configured(settings, "proxmox").is_some() {
         match collect_proxmox(settings, secrets, paths).await {
-            Ok(value) => {
+            Ok((value, storage_fresh)) => {
                 state.pve = Some(value);
-                providers.insert("proxmox", status(true, true, None));
+                let mut provider = status(true, true, None);
+                provider["storage_fresh"] = Value::Bool(storage_fresh);
+                providers.insert("proxmox", provider);
             }
             Err(error) => {
                 providers.insert("proxmox", status(true, false, Some(&error)));
@@ -526,8 +622,8 @@ pub async fn collect_telemetry_state_with_paths(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_local_sysfs, normalize_ollama, normalize_proxmox, proxmox_auth_values,
-        proxmox_authorization, proxmox_ca_pem,
+        apply_host_storage_overlay, disk_data_if_valid, normalize_local_sysfs, normalize_ollama,
+        normalize_proxmox, proxmox_auth_values, proxmox_authorization, proxmox_ca_pem,
     };
     use aooscope_config::AppPaths;
     use aooscope_types::ProviderSecrets;
@@ -544,6 +640,57 @@ mod tests {
         assert_eq!(value["guests_running"], 1);
         assert_eq!(value["disks"][0]["name"], "Disk A");
         assert_eq!(value["smart"][0]["health"], "PASSED");
+    }
+
+    #[test]
+    fn malformed_successful_disk_payload_is_not_fresh() {
+        assert!(disk_data_if_valid(&json!({"data": [{"devpath": "/dev/sda"}]})).is_some());
+        assert!(disk_data_if_valid(&json!({"data": null})).is_none());
+        assert!(disk_data_if_valid(&json!({"status": "ok"})).is_none());
+    }
+
+    #[test]
+    fn host_storage_overlay_enriches_matching_devpath_without_reordering() {
+        let root =
+            std::env::temp_dir().join(format!("aooscope-host-storage-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("private")).unwrap();
+        fs::write(root.join("private/host-storage.json"), serde_json::to_vec(&json!({"devices":[
+            {"devpath":"/dev/sdb","display_name":"ARCHIVE DISK","filesystem_label":"archive_disk","size":3000,"used":2400,"avail":600,"usage_pct":80.0},
+            {"devpath":"/dev/sda","display_name":"DATA PRIMARY","size":3000,"used":2700,"avail":300,"usage_pct":90.0}
+        ]})).unwrap()).unwrap();
+        let mut pve = normalize_proxmox(&json!({
+            "disks":[{"devpath":"/dev/sda","path":"/dev/disk/by-id/disk-a","model":"A","size":3100},{"devpath":"/dev/sdb","model":"B","size":3100}],
+            "smart":[{"health":"A-OK"},{"health":"B-OK"}]
+        }));
+        apply_host_storage_overlay(&mut pve, Some(&AppPaths::new(&root)));
+        assert_eq!(pve["disks"][0]["devpath"], "/dev/sda");
+        assert_eq!(pve["disks"][0]["path"], "/dev/disk/by-id/disk-a");
+        assert_eq!(pve["disks"][0]["display_name"], "DATA PRIMARY");
+        assert_eq!(pve["disks"][0]["name"], "DATA PRIMARY");
+        assert_eq!(pve["disks"][0]["model"], "A");
+        assert_eq!(pve["disks"][0]["usage_pct"], 90.0);
+        assert_eq!(pve["disks"][1]["display_name"], "ARCHIVE DISK");
+        assert_eq!(pve["smart"][0]["health"], "A-OK");
+        assert_eq!(pve["smart"][1]["health"], "B-OK");
+
+        fs::write(
+            root.join("private/host-storage.json"),
+            serde_json::to_vec(&json!({"devices":[
+                {"devpath":"/dev/sda","display_name":"","filesystem_label":"data_primary"}
+            ]}))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut fallback = normalize_proxmox(&json!({
+            "disks":[{"devpath":"/dev/sda","model":"A"}],
+            "smart":[{"health":"A-OK"}]
+        }));
+        apply_host_storage_overlay(&mut fallback, Some(&AppPaths::new(&root)));
+        assert!(fallback["disks"][0].get("display_name").is_none());
+        assert_eq!(fallback["disks"][0]["name"], "A");
+        assert_eq!(fallback["disks"][0]["filesystem_label"], "data_primary");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

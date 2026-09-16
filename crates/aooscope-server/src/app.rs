@@ -1,6 +1,7 @@
 use crate::{assets, routes, state::AppState};
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     http::{HeaderName, StatusCode},
     routing::{delete, get, post, put},
 };
@@ -85,6 +86,7 @@ pub fn app(state: AppState) -> Router {
         .with_state(state)
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
+        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .layer(RequestBodyLimitLayer::new(64 * 1024 * 1024))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
