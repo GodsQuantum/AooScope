@@ -97,10 +97,10 @@ pub fn inventory(state: &StateDocument) -> Vec<StorageDevice> {
                     .get("temperature_c")
                     .or_else(|| smart.get("temperature"))
                     .and_then(Value::as_f64),
-                health: disk
+                health: smart
                     .get("health")
                     .filter(|value| !value.is_null())
-                    .or_else(|| smart.get("health"))
+                    .or_else(|| disk.get("health"))
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             }
@@ -113,6 +113,19 @@ mod tests {
     use super::inventory;
     use aooscope_types::StateDocument;
     use serde_json::json;
+
+    #[test]
+    fn inventory_prefers_smart_health_over_disk_list_placeholder() {
+        let state = StateDocument {
+            pve: Some(json!({
+                "disks":[{"devpath":"/dev/sda","health":"UNKNOWN"}],
+                "smart":[{"health":"PASSED","temperature_c":42.0}]
+            })),
+            ..StateDocument::default()
+        };
+        let devices = inventory(&state);
+        assert_eq!(devices[0].health.as_deref(), Some("PASSED"));
+    }
 
     #[test]
     fn inventory_prefers_host_display_name_and_usage() {
