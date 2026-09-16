@@ -75,7 +75,9 @@ pub fn inventory(state: &StateDocument) -> Vec<StorageDevice> {
                     .unwrap_or_default()
                     .to_owned(),
                 label: disk
-                    .get("name")
+                    .get("display_name")
+                    .or_else(|| disk.get("filesystem_label"))
+                    .or_else(|| disk.get("name"))
                     .or_else(|| disk.get("model"))
                     .or_else(|| disk.get("path"))
                     .or_else(|| disk.get("devpath"))
@@ -104,4 +106,25 @@ pub fn inventory(state: &StateDocument) -> Vec<StorageDevice> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inventory;
+    use aooscope_types::StateDocument;
+    use serde_json::json;
+
+    #[test]
+    fn inventory_prefers_host_display_name_and_usage() {
+        let state = StateDocument {
+            pve: Some(json!({
+                "disks":[{"devpath":"/dev/sda","model":"Ugly model","display_name":"DATA PRIMARY","used":900,"avail":100,"usage_pct":90.0}],
+                "smart":[{"health":"PASSED"}]
+            })),
+            ..StateDocument::default()
+        };
+        let devices = inventory(&state);
+        assert_eq!(devices[0].label, "DATA PRIMARY");
+        assert_eq!(devices[0].usage_pct, Some(90.0));
+    }
 }
