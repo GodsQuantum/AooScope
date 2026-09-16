@@ -26,19 +26,21 @@ describe('PageStrip', () => {
     expect(ondelete).toHaveBeenCalledWith('home');
   });
 
-  it('keeps tile settings inside the compact actions disclosure', async () => {
+  it('shows live/off state and toggle directly on every page card', async () => {
     const onchange = vi.fn();
     const onsave = vi.fn();
     const oncreate = vi.fn();
     render(PageStrip, { props: { pages, selected: 'home', onchange, onselect: vi.fn(), onduplicate: vi.fn(), onrestore: vi.fn(), ondelete: vi.fn(), onsave, oncreate } });
-    expect(screen.getByTestId('page-thumbnail-home')).toBeTruthy();
-    expect(screen.getByLabelText('Home enabled')).toBeTruthy();
+    expect(screen.getByText('1 live · 1 off')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Disable Home' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Enable Custom' })).toBeTruthy();
+    expect(screen.getByTestId('page-tile-custom').classList.contains('disabled')).toBe(true);
+    expect(screen.getByTestId('page-tile-home').classList.contains('active')).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Disable Home' }));
+    expect(onchange).toHaveBeenCalledWith([{ ...pages[0], enabled: false }, pages[1]]);
     const details = screen.getAllByText('Actions')[0].closest('details');
     expect(details?.open).toBe(false);
-    expect(details?.contains(screen.getAllByRole('checkbox', { name: 'Enabled' })[0])).toBe(true);
     expect(details?.contains(screen.getByRole('spinbutton', { name: 'Duration Home' }))).toBe(true);
-    await fireEvent.click(screen.getAllByRole('checkbox', { name: 'Enabled' })[0]);
-    expect(onchange).toHaveBeenCalledWith([{ ...pages[0], enabled: false }, pages[1]]);
     await fireEvent.change(screen.getByRole('spinbutton', { name: 'Duration Home' }), { target: { value: '15' } });
     expect(onchange).toHaveBeenCalledWith([{ ...pages[0], duration: 15 }, pages[1]]);
     await fireEvent.click(screen.getByRole('button', { name: 'Create page' }));

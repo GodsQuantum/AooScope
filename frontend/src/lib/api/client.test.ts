@@ -16,6 +16,11 @@ describe('requestBlob', () => {
       body: JSON.stringify({ page: {} })
     });
   });
+
+  it('surfaces the server error detail for failed previews', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'invalid page', ok: false }), { status: 400, headers: { 'Content-Type': 'application/json' } })));
+    await expect(requestBlob('/api/preview', 'POST', { page: {} })).rejects.toThrow('/api/preview: invalid page (HTTP 400)');
+  });
 });
 
 describe('requestJson', () => {

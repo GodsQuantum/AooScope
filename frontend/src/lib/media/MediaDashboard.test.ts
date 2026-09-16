@@ -9,6 +9,13 @@ describe('MediaDashboard', () => {
     expect(screen.queryByText(/Sample media|The Expanse|MB\/s/)).toBeNull();
   });
 
+  it('keeps the offline state compact without a fake poster panel', () => {
+    render(MediaDashboard, { event: { mode: 'offline' }, onorbit: () => {}, onpreview: () => {} });
+    expect(screen.getByTestId('media-empty-state')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('MEDIA OFFLINE');
+    expect(screen.queryByLabelText('Poster unavailable')).toBeNull();
+  });
+
   it('renders only the supplied playing activity', () => {
     render(MediaDashboard, { event: { mode: 'playing', title: 'Real episode', progress_pct: 41, provider_chain: ['Jellyfin'] }, onorbit: () => {}, onpreview: () => {} });
     expect(screen.getByText('Real episode')).toBeTruthy();
