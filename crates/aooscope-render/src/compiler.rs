@@ -147,9 +147,27 @@ fn progress(state: &StateDocument, layer: &Layer) -> f64 {
         .unwrap_or(100.0);
     ((raw - min) / (max - min).max(f64::EPSILON)).clamp(0.0, 1.0)
 }
+fn format_number(value: f64, decimals: usize) -> String {
+    if !value.is_finite() {
+        return "--".to_owned();
+    }
+    let rendered = format!("{value:.decimals$}");
+    if decimals == 0 {
+        rendered
+    } else {
+        rendered
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_owned()
+    }
+}
+
 fn value_text(state: &StateDocument, binding: Option<&str>, fallback: &str) -> String {
     match binding_value(state, binding) {
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => value
+            .as_f64()
+            .map(|value| format_number(value, 1))
+            .unwrap_or_else(|| fallback.to_owned()),
         Value::String(value) => value,
         Value::Array(values) => values
             .into_iter()
@@ -203,6 +221,15 @@ fn layer_value_text(state: &StateDocument, layer: &Layer, fallback: &str) -> Str
         } else {
             fallback.to_owned()
         };
+    }
+    if let Value::Number(value) = binding_value(state, layer.binding.as_deref())
+        && let Some(value) = value.as_f64()
+    {
+        let decimals = match layer.extra.get("unit").and_then(Value::as_str) {
+            Some("%" | "°" | "°C") => 0,
+            _ => 1,
+        };
+        return format_number(value, decimals);
     }
     value_text(state, layer.binding.as_deref(), fallback)
 }
@@ -748,7 +775,23 @@ fn draw_layer_text(image: &mut RgbImage, layer: &Layer, text: &str, color: Rgb<u
 
 #[cfg(test)]
 mod formatting_tests {
-    use super::format_bytes;
+    use super::{format_bytes, format_number, value_text};
+    use aooscope_types::StateDocument;
+    use serde_json::json;
+
+    #[test]
+    fn ordinary_numbers_are_compact_before_units_are_appended() {
+        let state = StateDocument {
+            pve: Some(json!({"usage_pct": 65.837291823})),
+            ..StateDocument::default()
+        };
+        assert_eq!(
+            value_text(&state, Some("aooscope_pve_usage_pct"), "--"),
+            "65.8"
+        );
+        assert_eq!(format_number(100.0, 0), "100");
+        assert_eq!(format_number(68.4, 0), "68");
+    }
 
     #[test]
     fn bytes_are_human_readable_for_storage_cards() {

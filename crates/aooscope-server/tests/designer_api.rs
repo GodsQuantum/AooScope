@@ -356,6 +356,58 @@ async fn storage_regeneration_uses_inventory_and_preserves_custom_pages() {
 }
 
 #[tokio::test]
+async fn media_upload_accepts_payload_above_axum_default_multipart_limit() {
+    let temp = std::env::temp_dir().join(format!("aooscope-large-media-{}", uuid::Uuid::new_v4()));
+    let paths = AppPaths::new(&temp);
+    bootstrap(&paths).unwrap();
+
+    let mut seed = 0x1234_5678_u32;
+    let mut image = image::RgbImage::new(1200, 800);
+    for pixel in image.pixels_mut() {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        *pixel = image::Rgb([(seed >> 24) as u8, (seed >> 16) as u8, (seed >> 8) as u8]);
+    }
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    assert!(
+        png.len() > 2 * 1024 * 1024,
+        "fixture must exceed Axum default"
+    );
+    assert!(png.len() < 64 * 1024 * 1024);
+
+    let boundary = "aooscope-large-upload-boundary";
+    let mut multipart = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"large.png\"\r\nContent-Type: image/png\r\n\r\n"
+    )
+    .into_bytes();
+    multipart.extend_from_slice(&png);
+    multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let response = app(AppState::new(paths))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/media")
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(multipart))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    let uploaded = body(response).await;
+    assert_eq!(uploaded["format"], "PNG");
+    assert_eq!(uploaded["width"], 1200);
+    assert_eq!(uploaded["height"], 800);
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[tokio::test]
 async fn invalid_page_update_is_rejected_without_changing_pages_json() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/appdata-v1");
     let temp = std::env::temp_dir().join(format!("aooscope-invalid-page-{}", std::process::id()));
