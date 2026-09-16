@@ -21,10 +21,23 @@ describe('MediaLibrary', () => {
   it('uses generic splash wording while keeping the compatibility callback', async () => {
     const onorbit = vi.fn();
     render(MediaLibrary, { props: { onorbit, onpreview: () => {}, assets: [{ id: 'logo', name: 'Logo', kind: 'image' }] } });
-    expect(screen.getByText('Splash animation')).toBeTruthy();
+    expect(screen.getByText('Splash image / animation')).toBeTruthy();
     expect(screen.queryByText(/Orbit animation preset|Créer \/ mettre à jour Orbit|Aperçu Orbit/)).toBeNull();
     await fireEvent.change(screen.getByLabelText('Splash source'), { target: { value: 'logo' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Use as splash' }));
-    expect(onorbit).toHaveBeenCalledWith('logo', undefined);
+    expect(screen.getByLabelText('Splash fit')).toBeTruthy();
+    expect(screen.getByLabelText('Horizontal anchor')).toBeTruthy();
+    expect(screen.getByLabelText('Vertical anchor')).toBeTruthy();
+    expect(onorbit).toHaveBeenCalledWith('logo', undefined, { fit: 'contain', align: 'center', valign: 'center' });
   });
+
+  it('contains thumbnails and can add an uploaded asset to the current page', async () => {
+    const onadd = vi.fn();
+    render(MediaLibrary, { props: { ...props, onadd, assets: [{ id: 'portrait', name: 'Portrait', kind: 'image', width: 600, height: 1200 }] } });
+    const image = screen.getByRole('img', { name: 'Portrait' }) as HTMLImageElement;
+    expect(image.style.objectFit).toBe('contain');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Portrait to current page' }));
+    expect(onadd).toHaveBeenCalledWith(expect.objectContaining({ id: 'portrait', width: 600, height: 1200 }));
+  });
+
 });

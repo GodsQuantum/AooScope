@@ -97,4 +97,22 @@ describe('Canvas', () => {
     expect((document.querySelector('[data-layer="badge"]') as HTMLElement).style.borderRadius).toBe('999px');
   });
 
+  it('previews image fit and anchoring without distorting the asset', () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+    render(Canvas, { props: {
+      layers: [{ id: 'logo', type: 'image', asset_id: 'asset-1', fit: 'contain', align: 'right', valign: 'bottom', x: 0, y: 0, width: 200, height: 100 }],
+      onselect: vi.fn(), onchange: vi.fn()
+    }});
+    const image = screen.getByRole('img', { name: 'Layer image logo' }) as HTMLImageElement;
+    expect(image.src).toContain('/api/media/asset-1/file');
+    expect(image.style.objectFit).toBe('contain');
+    expect(image.style.objectPosition).toBe('right bottom');
+  });
+
+  it('shows a shooting-star layer as a visual overlay', () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+    render(Canvas, { props: { layers: [{ id: 'star', type: 'shooting_star', x: 0, y: 0, width: 240, height: 80, angle_deg: -18, trail_length: 90 }], onselect: vi.fn(), onchange: vi.fn() } });
+    expect(screen.getByTestId('shooting-star-star')).toBeTruthy();
+  });
+
 });

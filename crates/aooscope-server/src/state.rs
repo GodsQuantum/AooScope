@@ -361,18 +361,28 @@ impl RevisionFrameSource {
             if let Some(layer) = page
                 .layers
                 .iter()
-                .find(|layer| layer.layer_type == "animation")
+                .find(|layer| matches!(layer.layer_type.as_str(), "animation" | "shooting_star"))
             {
                 let preset = layer
                     .extra
                     .get("preset_id")
                     .and_then(serde_json::Value::as_str)
                     .and_then(|id| presets.iter().find(|preset| preset.id == id));
-                let fps = preset
-                    .and_then(|preset| preset.settings.get("fps"))
+                let default_fps = if layer.layer_type == "shooting_star" {
+                    8_u64
+                } else {
+                    u64::from(aooscope_display::DEFAULT_ANIMATION_FPS)
+                };
+                let fps = layer
+                    .extra
+                    .get("fps")
                     .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(u64::from(aooscope_display::DEFAULT_ANIMATION_FPS))
-                    as u32;
+                    .or_else(|| {
+                        preset
+                            .and_then(|preset| preset.settings.get("fps"))
+                            .and_then(serde_json::Value::as_u64)
+                    })
+                    .unwrap_or(default_fps) as u32;
                 let speed = layer
                     .extra
                     .get("speed_seconds")
@@ -382,7 +392,11 @@ impl RevisionFrameSource {
                             .and_then(|preset| preset.settings.get("speed_seconds"))
                             .and_then(serde_json::Value::as_f64)
                     })
-                    .unwrap_or(4.0)
+                    .unwrap_or(if layer.layer_type == "shooting_star" {
+                        3.0
+                    } else {
+                        4.0
+                    })
                     .max(0.5);
                 return Ok(Some((fps, speed)));
             }
@@ -717,6 +731,29 @@ mod tests {
         assert_eq!(
             DisplayScheduler::default().refresh_interval(false),
             Duration::from_secs(1)
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shooting_star_requests_eight_fps_animation_refresh() {
+        let (paths, root) = fixture("shooting-star-refresh");
+        let pages = json!({
+            "schema_version": 1, "revision": 1, "carousel": ["home"],
+            "pages": {"home": {
+                "id":"home","name":"Home","enabled":true,"duration":8,"revision":1,
+                "layers":[{"id":"star","type":"shooting_star","x":20,"y":20,"width":300,"height":90,"z":2,"fps":8,"speed_seconds":3}]
+            }}
+        });
+        fs::write(
+            root.join("compiled/r1/source-pages.json"),
+            serde_json::to_vec(&pages).unwrap(),
+        )
+        .unwrap();
+        let mut source = RevisionFrameSource::new(paths);
+        assert_eq!(
+            source.animation_fps(&PromotedRevision::new("r1")).unwrap(),
+            Some(8)
         );
         let _ = fs::remove_dir_all(root);
     }
