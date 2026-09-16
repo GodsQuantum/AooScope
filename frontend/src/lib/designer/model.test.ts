@@ -7,6 +7,8 @@ describe('designer model', () => {
     expect(inversePointer({ left: 10, top: 20, width: 480, height: 188 }, 100, 50)).toEqual({ x: 180, y: 60 });
     expect(clampRect({ x: 900, y: 350, width: 100, height: 100 })).toEqual({ x: 860, y: 276, width: 100, height: 100 });
     expect(inversePointer({ left: 10, top: 20, width: 960, height: 376 }, 970, 396)).toEqual({ x: 960, y: 376 });
+    expect(inversePointer({ left: 50, top: 485.28125, width: 700, height: 274.166687 }, 96.5, 568.1)).toEqual({ x: 64, y: 114 });
+    expect(clampRect({ x: 62.2727, y: 113.922, width: 200.4, height: 23.6 })).toEqual({ x: 62, y: 114, width: 200, height: 24 });
     expect(resizeRect({ x: 900, y: 340, width: 40, height: 36 }, { x: 20, y: 0 })).toEqual({ x: 900, y: 340, width: 60, height: 36 });
     expect(resizeRect({ x: 10, y: 10, width: 40, height: 36 }, { x: -100, y: -100 })).toEqual({ x: 10, y: 10, width: 1, height: 1 });
   });

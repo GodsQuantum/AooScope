@@ -36,6 +36,37 @@ function initial(path: string) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('admin page persistence', () => {
+  it('makes unsaved page state visible and clears it after saving', async () => {
+    let pagesGets = 0;
+    const fetchMock = vi.fn(async (path: string, options: RequestInit = {}) => {
+      if (path === '/api/pages' && ++pagesGets > 1) return response({ ...initial(path), revision: 8 });
+      if (path === '/api/pages/home' && options.method === 'PUT') return response({ ...home, revision: 4 });
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    expect(screen.getByText('Saved', { selector: '[data-testid="page-draft-state"]' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Ajouter Texte' }));
+    expect(screen.getByText('Unsaved draft', { selector: '[data-testid="page-draft-state"]' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Save page' }));
+    await waitFor(() => expect(screen.getByText('Saved', { selector: '[data-testid="page-draft-state"]' })).toBeTruthy());
+  });
+
+  it('opens rendered previews in a focused overlay', async () => {
+    const fetchMock = vi.fn(async (path: string) => {
+      if (path === '/api/preview') return new Response(new Blob(['png'], { type: 'image/png' }), { status: 200, headers: { 'Content-Type': 'image/png' } });
+      return response(initial(path));
+    });
+    vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    render(PageRoute);
+    await screen.findByText('Home', { selector: 'h2' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await waitFor(() => expect(screen.getByTestId('preview-overlay')).toBeTruthy());
+    expect(screen.getByRole('img', { name: 'Rendered LCD page preview' })).toBeTruthy();
+  });
   it('merges carousel edits made while a refresh is pending', async () => {
     let pagesGets = 0;
     let resolveRefresh!: (value: ReturnType<typeof response>) => void;
@@ -323,7 +354,9 @@ describe('admin page persistence', () => {
     expect(screen.getByTestId('page-strip')).toBeTruthy();
     expect(screen.getByRole('button', { name: '+ Metric' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Templates' })).toBeTruthy();
-    expect(screen.getByText('Utilisation CPU')).toBeTruthy();
+    const gauge = screen.getByRole('button', { name: 'Select Utilisation CPU' });
+    expect(gauge.textContent).toBe('');
+    expect(screen.queryByText('Utilisation CPU')).toBeNull();
     expect(screen.queryByText('aooscope_pve_cpu_pct')).toBeNull();
     expect(screen.queryByText('Inspecteur')).toBeNull();
   });
@@ -337,7 +370,7 @@ describe('admin page persistence', () => {
     });
     vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('ResizeObserver', FakeResizeObserver);
     render(PageRoute);
-    const layer = await screen.findByRole('button', { name: 'Utilisation CPU 42%' });
+    const layer = await screen.findByRole('button', { name: 'Select Utilisation CPU' });
     await fireEvent.click(layer);
     await fireEvent.click(screen.getByRole('button', { name: 'Bar' }));
     expect(layer.classList.contains('bar')).toBe(true);
@@ -352,8 +385,9 @@ describe('admin page persistence', () => {
     await fireEvent.click(screen.getByRole('button', { name: '+ Metric' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add Utilisation CPU' }));
     const canvas = within(screen.getByTestId('logical-canvas'));
-    expect(canvas.getByText('Utilisation CPU')).toBeTruthy();
-    expect(canvas.getByText('42%')).toBeTruthy();
+    const gauge = canvas.getByRole('button', { name: 'Select Utilisation CPU' });
+    expect(gauge.textContent).not.toContain('Utilisation CPU');
+    expect(gauge.textContent).not.toContain('42%');
     expect(screen.queryByText(metric.id)).toBeNull();
   });
 
@@ -369,7 +403,8 @@ describe('admin page persistence', () => {
     expect(canvas.getByText('Text')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: '+ Metric' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add Disque 1 · nom' }));
-    expect(canvas.getByText('Disque 1 · nom')).toBeTruthy();
+    expect(canvas.getByRole('button', { name: 'Select Disque 1 · nom' })).toBeTruthy();
+    expect(canvas.getByText('NVMe')).toBeTruthy();
     expect(canvas.getAllByText('Text')).toHaveLength(1);
   });
 
