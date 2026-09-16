@@ -215,8 +215,27 @@ impl AppState {
             })
         {
             document.pve = None;
-        } else if telemetry.pve.is_some() {
-            document.pve = telemetry.pve.clone();
+        } else if let Some(incoming_pve) = &telemetry.pve {
+            let storage_fresh = providers
+                .and_then(|items| items.get("proxmox"))
+                .and_then(|value| value.get("storage_fresh"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true);
+            if storage_fresh {
+                document.pve = Some(incoming_pve.clone());
+            } else {
+                let mut merged = incoming_pve.clone();
+                if let (Some(target), Some(previous)) =
+                    (merged.as_object_mut(), document.pve.as_ref())
+                {
+                    for key in ["disks", "smart"] {
+                        if let Some(value) = previous.get(key) {
+                            target.insert(key.to_owned(), value.clone());
+                        }
+                    }
+                }
+                document.pve = Some(merged);
+            }
         }
         if let Some(meta) = &telemetry.meta {
             let current = document
@@ -572,6 +591,37 @@ mod tests {
         }
         assert_eq!(saved["media"]["display"]["mode"], "playing");
         assert_eq!(saved["custom"]["keep"], true);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn proxmox_storage_survives_transient_subendpoint_failure() {
+        let root =
+            std::env::temp_dir().join(format!("aooscope-storage-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("state.json"), br#"{"pve":{"cpu_pct":10,"disks":[{"path":"/dev/sda"}],"smart":[{"health":"PASSED"}]}}"#).unwrap();
+        let state = AppState::new(AppPaths::new(&root));
+        state.persist_telemetry_snapshot(&StateDocument {
+            pve: Some(json!({"cpu_pct": 20, "disks": [], "smart": []})),
+            meta: Some(json!({"providers":{"proxmox":{"configured":true,"online":true,"storage_fresh":false}}})),
+            ..StateDocument::default()
+        }).unwrap();
+        let saved: Value =
+            serde_json::from_slice(&fs::read(root.join("state.json")).unwrap()).unwrap();
+        assert_eq!(saved["pve"]["cpu_pct"], 20);
+        assert_eq!(saved["pve"]["disks"][0]["path"], "/dev/sda");
+        assert_eq!(saved["pve"]["smart"][0]["health"], "PASSED");
+
+        state.persist_telemetry_snapshot(&StateDocument {
+            pve: Some(json!({"cpu_pct": 30, "disks": [{"path":"/dev/sdb"}], "smart": [{"health":"WARN"}]})),
+            meta: Some(json!({"providers":{"proxmox":{"configured":true,"online":true,"storage_fresh":true}}})),
+            ..StateDocument::default()
+        }).unwrap();
+        let saved: Value =
+            serde_json::from_slice(&fs::read(root.join("state.json")).unwrap()).unwrap();
+        assert_eq!(saved["pve"]["disks"][0]["path"], "/dev/sdb");
+        assert_eq!(saved["pve"]["smart"][0]["health"], "WARN");
         let _ = fs::remove_dir_all(root);
     }
 
