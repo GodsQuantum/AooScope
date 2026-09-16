@@ -8,6 +8,18 @@
   const status = $derived(mode === 'incoming' && event.eta_minutes !== undefined ? `READY IN ${event.eta_minutes} MIN` : mode === 'playing' && event.remaining_minutes !== undefined ? `${event.remaining_minutes} MIN LEFT` : mode === 'landed' ? 'JUST LANDED' : mode === 'idle' ? 'MEDIA READY' : mode === 'offline' ? 'MEDIA OFFLINE' : mode.toUpperCase());
   const detail = $derived([event.provider_chain?.join(' + '), mode === 'incoming' && event.speed_bytes_s !== undefined ? `${Math.round(event.speed_bytes_s / 1_000_000)} MB/s` : undefined].filter(Boolean).join(' · ') || (mode === 'offline' ? 'Providers unavailable' : 'No active media event'));
   const poster = $derived(event.poster_asset_id ? `/api/media/${event.poster_asset_id}/file` : event.poster_url);
+  const compact = $derived(mode === 'offline' || mode === 'idle');
 </script>
-<section class="dashboard"><div class="live"><div class="playing"><span>Live</span><h2>{heading}</h2><MediaCard title={event.title ?? 'Aucune activité'} {detail} {status} {poster} progress={event.progress_pct} /></div></div><MediaLibrary {assets} {presets} {onorbit} {onpreview} {onupload} {onreplace} {ondelete} /></section>
-<style>.dashboard{display:grid;gap:20px}.live{display:grid;gap:14px}.playing{display:grid;gap:8px;padding:15px;border:1px solid #263f52;border-radius:16px;background:linear-gradient(145deg,#0d1c29,#09151f);box-shadow:0 14px 34px #0003}.playing>span{color:#35d9ff;font-size:.65rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.dashboard h2{margin:0}</style>
+<section class="dashboard">
+  <div class="live">
+    {#if compact}
+      <div class="empty-live" data-testid="media-empty-state"><i aria-hidden="true"></i><div><span>Live media</span><h2>{heading}</h2><p>{detail}</p></div><strong role="status">{status}</strong></div>
+    {:else}
+      <div class="playing"><span>Live</span><h2>{heading}</h2><MediaCard title={event.title ?? 'Aucune activité'} {detail} {status} {poster} progress={event.progress_pct} /></div>
+    {/if}
+  </div>
+  <MediaLibrary {assets} {presets} {onorbit} {onpreview} {onupload} {onreplace} {ondelete} />
+</section>
+<style>
+  .dashboard{display:grid;gap:18px}.live{display:grid}.playing{display:grid;gap:8px;padding:15px;border:1px solid #263f52;border-radius:16px;background:linear-gradient(145deg,#0d1c29,#09151f);box-shadow:0 14px 34px #0003}.playing>span,.empty-live span{color:#35d9ff;font-size:.65rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.dashboard h2{margin:0}.empty-live{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:14px 16px;border:1px solid #263f52;border-radius:14px;background:#091722}.empty-live i{width:12px;height:12px;border-radius:50%;background:#526b79;box-shadow:0 0 0 5px #526b7918}.empty-live h2{margin:2px 0;font-size:1rem}.empty-live p{margin:0;color:#8198a6;font-size:.75rem}.empty-live strong{padding:6px 9px;border:1px solid #405361;border-radius:999px;color:#9eb1bc;background:#0d1b25;font-size:.68rem;letter-spacing:.06em}@media(max-width:620px){.empty-live{grid-template-columns:auto 1fr}.empty-live strong{grid-column:2;justify-self:start}}
+</style>

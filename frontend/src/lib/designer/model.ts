@@ -8,15 +8,23 @@ export type Page = { id: string; name: string; revision: number; background?: { 
 
 export const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 export function clampRect(rect: Rect): Rect {
-  const width = clamp(rect.width, 1, CANVAS_WIDTH);
-  const height = clamp(rect.height, 1, CANVAS_HEIGHT);
-  return { x: clamp(rect.x, 0, CANVAS_WIDTH - width), y: clamp(rect.y, 0, CANVAS_HEIGHT - height), width, height };
+  const width = clamp(Math.round(rect.width), 1, CANVAS_WIDTH);
+  const height = clamp(Math.round(rect.height), 1, CANVAS_HEIGHT);
+  return {
+    x: clamp(Math.round(rect.x), 0, CANVAS_WIDTH - width),
+    y: clamp(Math.round(rect.y), 0, CANVAS_HEIGHT - height),
+    width,
+    height
+  };
 }
 export function resizeRect(rect: Rect, delta: { x: number; y: number }): Rect {
   return clampRect({ ...rect, width: rect.width + delta.x, height: rect.height + delta.y });
 }
 export function inversePointer(canvas: { left: number; top: number; width: number; height: number }, clientX: number, clientY: number) {
-  return { x: clamp((clientX - canvas.left) * CANVAS_WIDTH / canvas.width, 0, CANVAS_WIDTH), y: clamp((clientY - canvas.top) * CANVAS_HEIGHT / canvas.height, 0, CANVAS_HEIGHT) };
+  return {
+    x: Math.round(clamp((clientX - canvas.left) * CANVAS_WIDTH / canvas.width, 0, CANVAS_WIDTH)),
+    y: Math.round(clamp((clientY - canvas.top) * CANVAS_HEIGHT / canvas.height, 0, CANVAS_HEIGHT))
+  };
 }
 export function compatibleMetrics(metrics: Metric[], widget: WidgetType) { return metrics.filter((metric) => metric.recommended_widgets.includes(widget)); }
 

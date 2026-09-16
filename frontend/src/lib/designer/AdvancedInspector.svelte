@@ -11,7 +11,7 @@
 <section class="advanced" aria-label="Advanced inspector"><button class="toggle" aria-label="Advanced settings" onclick={toggle}>{open ? 'Close advanced settings' : 'Advanced settings'}</button>
   {#if open}<div class="drawer"><div class="heading"><div><span>Technical details</span><h3>{metric?.label ?? layer.text ?? 'Layer'}</h3></div><button aria-label="Close advanced settings" onclick={toggle}>×</button></div>
     {#if layer.binding}<label>Technical binding<code>{layer.binding}</code><input aria-label="Technical binding" value={layer.binding} oninput={(event) => onchange({ binding: event.currentTarget.value })} /></label>{/if}
-    <div class="geometry">{#each geometry as [key, title]}<label>{title}<input aria-label={title} type="number" value={Number(layer[key] ?? (key === 'z' ? 1 : 0))} oninput={(event) => onchange({ [key]: Number(event.currentTarget.value) })} /></label>{/each}</div>
+    <div class="geometry">{#each geometry as [key, title]}<label>{title}<input aria-label={title} type="number" step="1" value={Number(layer[key] ?? (key === 'z' ? 1 : 0))} oninput={(event) => onchange({ [key]: Math.round(Number(event.currentTarget.value)) })} /></label>{/each}</div>
     <div class="range"><label>Minimum<input aria-label="Minimum" type="number" value={Number(layer.min_value ?? 0)} oninput={(event) => onchange({ min_value: Number(event.currentTarget.value) })} /></label><label>Maximum<input aria-label="Maximum" type="number" value={Number(layer.max_value ?? 100)} oninput={(event) => onchange({ max_value: Number(event.currentTarget.value) })} /></label></div>
   </div>{/if}
 </section>

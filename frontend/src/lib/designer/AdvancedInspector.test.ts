@@ -16,4 +16,12 @@ describe('AdvancedInspector', () => {
     expect(screen.getByText(metric.id)).toBeTruthy();
     expect(screen.getByRole('spinbutton', { name: 'X position' })).toBeTruthy();
   });
+
+  it('normalizes geometry edits to whole logical pixels', async () => {
+    const onchange = vi.fn();
+    render(AdvancedInspector, { props: { layer, metrics: [metric], onchange, initialOpen: true } });
+    const input = screen.getByRole('spinbutton', { name: 'X position' });
+    await fireEvent.input(input, { target: { value: '10.7' } });
+    expect(onchange).toHaveBeenLastCalledWith({ x: 11 });
+  });
 });
