@@ -16,6 +16,11 @@ describe('DisplayControls', () => {
     expect(screen.queryByLabelText('Luminosité native')).toBeNull();
   });
 
+  it('offers the studio name as an explicit display identity setting', () => {
+    render(DisplayControls, { props: { capabilities: { width: 960, height: 376, native_brightness: false, power_control: true }, powerOn: true, brightness: 73, settings: { brand: 'Demo Rack' } } });
+    expect((screen.getByLabelText('Studio name') as HTMLInputElement).value).toBe('Demo Rack');
+  });
+
   it('keeps carousel interval visible while advanced display settings are collapsed', () => {
     render(DisplayControls, {
       props: {
@@ -59,7 +64,7 @@ describe('DisplayControls', () => {
 
   it('hydrates late settings without overwriting dirty local edits', async () => {
     const view = render(DisplayControls, { props: { capabilities: { width: 960, height: 376, native_brightness: false, power_control: true }, powerOn: true, brightness: 73, settings: {} } });
-    const brand = screen.getByLabelText('Brand') as HTMLInputElement;
+    const brand = screen.getByLabelText('Studio name') as HTMLInputElement;
     await view.rerender({ settings: { brand: 'AooScope', timezone: 'Europe/Paris', switch_seconds: 12, schedule_enabled: true, schedule: [], brightness: 61 } });
     await waitFor(() => expect(brand.value).toBe('AooScope'));
     await fireEvent.input(brand, { target: { value: 'Local edit' } });
@@ -80,7 +85,7 @@ describe('DisplayControls', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ display: canonical, providers: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     const view = render(DisplayControls, { props: { capabilities: { width: 960, height: 376, native_brightness: false, power_control: true }, powerOn: true, brightness: 73, settings: { brand: 'Initial' }, settingsDocument: { display: {}, providers: {} } } });
-    const brand = screen.getByLabelText('Brand') as HTMLInputElement;
+    const brand = screen.getByLabelText('Studio name') as HTMLInputElement;
     await fireEvent.input(brand, { target: { value: 'Local edit' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save display settings' }));
     await view.rerender({ settings: canonical, brightness: 61 });
@@ -95,7 +100,7 @@ describe('DisplayControls', () => {
     const canonical = { brand: 'Submitted', timezone: 'UTC', switch_seconds: 20, schedule_enabled: true, schedule: [], brightness: 61 };
     vi.stubGlobal('fetch', vi.fn(() => save));
     const view = render(DisplayControls, { props: { capabilities: { width: 960, height: 376, native_brightness: false, power_control: true }, powerOn: true, brightness: 73, settings: { brand: 'Initial' }, settingsDocument: { display: {}, providers: {} } } });
-    const brand = screen.getByLabelText('Brand') as HTMLInputElement;
+    const brand = screen.getByLabelText('Studio name') as HTMLInputElement;
     await fireEvent.input(brand, { target: { value: 'Submitted' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save display settings' }));
     await fireEvent.input(brand, { target: { value: 'Newer local edit' } });

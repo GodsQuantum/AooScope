@@ -39,6 +39,7 @@
   let pageDirty = $state(false); let carouselDirty = $state(false);
   let capabilities = $state({ width: 960, height: 376, native_brightness: false, power_control: true, power_on: false });
   const selectedLayer = $derived(page?.layers.find((layer) => layer.id === selected));
+  const studioName = $derived(typeof settings.display.brand === 'string' && settings.display.brand.trim() ? settings.display.brand.trim() : 'AooScope');
 
   async function loadPages(select?: string) {
     const listed = await requestJson<PagesResponse>('/api/pages'); pages = listed.pages; documentRevision = listed.revision;
@@ -68,8 +69,9 @@
   });
   function loadPage(id: string, alive = () => true) { const generation = ++pageRequestGeneration; return requestJson<Page>(`/api/pages/${id}`).then((value) => { if (alive() && isLatestRequest(generation, pageRequestGeneration)) { page = value; selected = undefined; advancedOpen = false; pageDirty = false; } return value; }).catch((cause) => { if (alive() && isLatestRequest(generation, pageRequestGeneration)) error = String(cause); throw cause; }); }
   function selectPage(id: string) { loadPage(id).catch(() => {}); }
-  function addWidget(type: WidgetType, extra?: Record<string, unknown>) { if (!page) return; const id = createWidgetId(); page = { ...page, layers: [...page.layers, { id, type, ...extra, x: 24, y: 24, width: type === 'text' ? 240 : 160, height: type === 'text' ? 48 : 80, z: page.layers.length + 1, text: type === 'text' && !extra?.binding ? 'Text' : undefined }] }; selected = id; pageDirty = true; notice = 'Draft changed'; }
+  function addWidget(type: WidgetType, extra?: Record<string, unknown>) { if (!page) return; const id = createWidgetId(); const base: Layer = { id, type, x: 24, y: 24, width: type === 'text' ? 240 : 160, height: type === 'text' ? 48 : 80, z: page.layers.length + 1, text: type === 'text' && !extra?.binding ? 'Text' : undefined }; const candidate = { ...base, ...extra, id, type } as Layer; const layer = { ...candidate, ...clampRect(candidate) }; page = { ...page, layers: [...page.layers, layer] }; selected = id; pageDirty = true; notice = 'Draft changed'; }
   function addMetric(metric: Metric, type: WidgetType) { addWidget(type, { binding: metric.id }); metricLibraryOpen = false; }
+  function addAssetToPage(asset: Asset) { const ratio = Number(asset.width ?? 1) / Math.max(Number(asset.height ?? 1), 1); const width = Math.max(1, Math.round(Math.min(320, 220 * ratio))); const height = Math.max(1, Math.round(width / ratio)); addWidget('image', { asset_id: asset.id, width, height, fit: 'contain', align: 'center', valign: 'center', lock_aspect: true, aspect_ratio: ratio }); active = 'Pages'; notice = `${asset.name} added to page`; }
   function updateLayer(id: string, changes: Partial<Layer>) { if (!page) return; page = { ...page, layers: page.layers.map((layer) => layer.id === id ? { ...layer, ...changes, ...clampRect({ ...layer, ...changes }) } : layer) }; pageDirty = true; notice = 'Draft changed'; }
   function selectLayer(id: string) { selected = id; advancedOpen = false; }
   function duplicateLayer() { if (!page || !selectedLayer) return; const id = createWidgetId(); const position = clampRect({ ...selectedLayer, x: selectedLayer.x + 12, y: selectedLayer.y + 12 }); page = { ...page, layers: [...page.layers, { ...selectedLayer, ...position, id, z: page.layers.length + 1 }] }; selected = id; pageDirty = true; notice = 'Draft changed'; }
@@ -88,18 +90,18 @@
   async function preview() { if (page) await renderPreview(page); }
   async function applyPersisted() { await requestJson('/api/apply', 'POST', {}); notice = 'Applied to LCD'; }
   async function apply() { try { await persistPageDraft(); await persistCarouselDraft(); await applyPersisted(); } catch (cause) { error = String(cause); } }
-  async function orbit(sourceAssetId: string, displayName?: string) { const selectionGeneration = pageRequestGeneration; try { const preset = await requestJson<Preset>('/api/media/presets/orbit', 'POST', { source_asset_id: sourceAssetId, ...(displayName ? { display_name: displayName } : {}) }); presets = [...presets.filter((item) => item.id !== preset.id), preset]; await refreshPagesPreservingCarousel(); const splash = pages.find((item) => item.name === 'Splash'); if (splash && selectionGeneration === pageRequestGeneration) await loadPage(splash.id); await persistCarouselDraft(); await applyPersisted(); } catch (cause) { error = String(cause); } }
+  async function orbit(sourceAssetId: string, displayName?: string, layout = { fit: 'contain', align: 'center', valign: 'center' }) { const selectionGeneration = pageRequestGeneration; try { const preset = await requestJson<Preset>('/api/media/presets/splash', 'POST', { source_asset_id: sourceAssetId, ...(displayName ? { display_name: displayName } : {}), ...layout }); presets = [...presets.filter((item) => !['orbit', preset.id].includes(item.id)), preset]; await refreshPagesPreservingCarousel(); const splash = pages.find((item) => item.name === 'Splash'); if (splash && selectionGeneration === pageRequestGeneration) await loadPage(splash.id); await persistCarouselDraft(); await applyPersisted(); notice = 'Splash updated'; } catch (cause) { error = String(cause); } }
   async function previewOrbit() { const splash = pages.find((item) => item.name === 'Splash'); if (splash) await loadPage(splash.id).then(renderPreview).catch((cause) => error = String(cause)); }
   async function upload(files: File[]) { try { for (const file of files) { const form = new FormData(); form.append('file', file); const response = await fetch('/api/media', { method: 'POST', body: form }); if (!response.ok) throw new Error(`Upload: HTTP ${response.status}`); } await loadLibrary(); notice = `${files.length} asset${files.length === 1 ? '' : 's'} uploaded`; } catch (cause) { error = String(cause); } }
   async function replaceAsset(id: string, file: File) { try { const form = new FormData(); form.append('file', file); const response = await fetch(`/api/media/${id}`, { method: 'PUT', body: form }); if (!response.ok) throw new Error(`Replace: HTTP ${response.status}`); await loadLibrary(); notice = 'Asset replaced'; } catch (cause) { error = String(cause); } }
-  async function deleteAsset(id: string) { if (!confirm('Delete this media asset?')) return; try { await requestJson(`/api/media/${id}`, 'DELETE'); await loadLibrary(); notice = 'Asset deleted'; } catch (cause) { error = `${String(cause)}. Assets used by a page are protected.`; } }
+  async function deleteAsset(id: string) { if (!confirm('Delete this media asset?')) return; try { let response = await fetch(`/api/media/${id}`, { method: 'DELETE' }); let detached = false; if (response.status === 409) { const payload = await response.json().catch(() => ({})) as { error?: string; usage?: string[] }; const usage = payload.usage?.join('\n') ?? 'Unknown reference'; if (!confirm(`This asset is in use by:\n${usage}\n\nDetach it everywhere and delete it?`)) return; response = await fetch(`/api/media/${id}?detach=true`, { method: 'DELETE' }); detached = true; } if (!response.ok) { const payload = await response.json().catch(() => ({})) as { error?: string; message?: string }; throw new Error(payload.message ?? payload.error ?? `HTTP ${response.status}`); } await loadLibrary(); if (detached) { const selectedPage = page?.id; await loadPages(selectedPage); await applyPersisted(); } notice = detached ? 'Asset detached and deleted' : 'Asset deleted'; } catch (cause) { error = String(cause); } }
   function closePreview() { if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = undefined; }
   onDestroy(closePreview);
 </script>
 
-<svelte:head><title>AooScope · LCD control studio</title></svelte:head>
+<svelte:head><title>{studioName} · AooScope</title></svelte:head>
 <main>
-  <header><div class="brand"><i></i><div><span>LCD CONTROL STUDIO</span><h1>AooScope</h1><p>Systems in focus</p></div></div><DisplayStatus {status} /></header>
+  <header><div class="brand"><i></i><div><span>LCD CONTROL STUDIO</span><h1>{studioName}</h1><p>Systems in focus</p></div></div><DisplayStatus {status} /></header>
   <Tabs tabs={tabs} {active} onselect={(tab) => active = tab} />
   {#if error}<div class="alert" role="alert"><span>{error}</span><button aria-label="Dismiss error" onclick={() => error = ''}>×</button></div>{/if}
   {#if notice}<p class="notice" aria-live="polite">{notice}</p>{/if}
@@ -119,7 +121,7 @@
       </section>
     </section>
   {:else if active === 'Media'}
-    <section class="panel"><MediaDashboard event={media} {assets} {presets} onorbit={orbit} onpreview={previewOrbit} onupload={upload} onreplace={replaceAsset} ondelete={deleteAsset} /></section>
+    <section class="panel"><MediaDashboard event={media} {assets} {presets} onorbit={orbit} onpreview={previewOrbit} onupload={upload} onreplace={replaceAsset} ondelete={deleteAsset} onadd={addAssetToPage} /></section>
   {:else if active === 'Display'}
     <section class="panel"><DisplayControls {capabilities} powerOn={capabilities.power_on} brightness={status.brightness} settings={settings.display} settingsDocument={settings} onpower={(on) => capabilities = { ...capabilities, power_on: on }} onbrightness={(value) => status = { ...status, brightness: value }} onsaved={(document) => settings = document as SettingsDocument} /></section>
   {:else}

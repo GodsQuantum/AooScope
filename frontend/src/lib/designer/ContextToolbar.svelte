@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Layer, Metric, WidgetType } from './model';
   let { layer, metrics, onchange, onadvanced, onduplicate, ondelete }: { layer: Layer; metrics: Metric[]; onchange: (changes: Partial<Layer>) => void; onadvanced: () => void; onduplicate?: () => void; ondelete?: () => void } = $props();
-  const widgetNames: Record<WidgetType, string> = { text: 'Text', value: 'Value', gauge: 'Gauge', ring: 'Ring', bar: 'Bar', badge: 'Status', sparkline: 'Chart', image: 'Image', animation: 'Animation' };
+  const widgetNames: Record<WidgetType, string> = { text: 'Text', value: 'Value', gauge: 'Gauge', ring: 'Ring', bar: 'Bar', badge: 'Status', sparkline: 'Chart', image: 'Image', animation: 'Animation', shooting_star: 'Shooting star' };
   const bindableTypes: WidgetType[] = ['text', 'value', 'gauge', 'ring', 'bar', 'badge'];
   const metric = $derived(metrics.find((item) => item.id === layer.binding));
   const metricChoices = $derived(metrics.filter((item) => item.recommended_widgets.includes(layer.type)));

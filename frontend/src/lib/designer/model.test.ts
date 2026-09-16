@@ -13,6 +13,11 @@ describe('designer model', () => {
     expect(resizeRect({ x: 10, y: 10, width: 40, height: 36 }, { x: -100, y: -100 })).toEqual({ x: 10, y: 10, width: 1, height: 1 });
   });
 
+  it('preserves an image aspect ratio while resizing', () => {
+    expect(resizeRect({ x: 10, y: 10, width: 200, height: 100 }, { x: 60, y: 5 }, 2)).toEqual({ x: 10, y: 10, width: 260, height: 130 });
+    expect(resizeRect({ x: 800, y: 296, width: 160, height: 80 }, { x: 200, y: 200 }, 2)).toEqual({ x: 800, y: 296, width: 160, height: 80 });
+  });
+
   it('filters metrics by widget compatibility', () => {
     expect(compatibleMetrics([{ id: 'a', label: 'a', provider_name: 'p', category: 'c', unit: '', recommended_widgets: ['gauge'] }, { id: 'b', label: 'b', provider_name: 'p', category: 'c', unit: '', recommended_widgets: ['text'] }], 'gauge')).toHaveLength(1);
   });

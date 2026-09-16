@@ -535,6 +535,110 @@ async fn orbit_preset_updates_only_the_bootstrapped_factory_splash() {
     let _ = fs::remove_dir_all(temp);
 }
 
+#[tokio::test]
+async fn media_delete_reports_usage_and_detach_removes_references() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/appdata-v1");
+    let temp = std::env::temp_dir().join(format!("aooscope-media-detach-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&temp).unwrap();
+    for name in ["pages.json", "media.json", "state.json", "settings.json"] {
+        fs::copy(source.join(name), temp.join(name)).unwrap();
+    }
+    let mut pages: PagesDocument =
+        serde_json::from_slice(&fs::read(temp.join("pages.json")).unwrap()).unwrap();
+    pages.pages.get_mut("page-home").unwrap().layers.push(serde_json::from_value(json!({"id":"logo","type":"image","asset_id":"fixture-image","x":0,"y":0,"width":100,"height":60,"z":2})).unwrap());
+    fs::write(
+        temp.join("pages.json"),
+        serde_json::to_vec_pretty(&pages).unwrap(),
+    )
+    .unwrap();
+    let mut media: Value =
+        serde_json::from_slice(&fs::read(temp.join("media.json")).unwrap()).unwrap();
+    media["presets"] = json!({"legacy":{"id":"legacy","name":"Legacy","source_asset_id":"fixture-image","settings":{}}});
+    fs::write(
+        temp.join("media.json"),
+        serde_json::to_vec_pretty(&media).unwrap(),
+    )
+    .unwrap();
+    let router = app(AppState::new(AppPaths::new(&temp)));
+    let blocked = router
+        .clone()
+        .oneshot(request("DELETE", "/api/media/fixture-image", Value::Null))
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), 409);
+    let blocked_body = body(blocked).await;
+    assert!(
+        blocked_body["usage"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item.as_str().unwrap().contains("Home"))
+    );
+    let detached = router
+        .oneshot(request(
+            "DELETE",
+            "/api/media/fixture-image?detach=true",
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(detached.status(), 204);
+    let pages: PagesDocument =
+        serde_json::from_slice(&fs::read(temp.join("pages.json")).unwrap()).unwrap();
+    assert!(
+        pages.pages["page-home"].layers.iter().all(|layer| layer
+            .extra
+            .get("asset_id")
+            .and_then(Value::as_str)
+            != Some("fixture-image"))
+    );
+    let media: Value = serde_json::from_slice(&fs::read(temp.join("media.json")).unwrap()).unwrap();
+    assert!(media["assets"].get("fixture-image").is_none());
+    assert!(media["presets"].as_object().unwrap().is_empty());
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[tokio::test]
+async fn splash_preset_can_use_a_static_image_with_fit_and_anchor() {
+    let temp =
+        std::env::temp_dir().join(format!("aooscope-static-splash-{}", uuid::Uuid::new_v4()));
+    let paths = AppPaths::new(&temp);
+    bootstrap(&paths).unwrap();
+    let png = image::RgbImage::from_pixel(4, 2, image::Rgb([9, 8, 7]));
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(png)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    let asset = MediaStore::new(&temp)
+        .unwrap()
+        .ingest(&bytes, "logo.png")
+        .unwrap();
+    let response = app(AppState::new(paths.clone()))
+        .oneshot(request(
+            "POST",
+            "/api/media/presets/splash",
+            json!({"source_asset_id":asset.id,"fit":"contain","align":"right","valign":"bottom"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let pages: PagesDocument = serde_json::from_slice(&fs::read(paths.pages()).unwrap()).unwrap();
+    let layer = pages.pages["page-splash"]
+        .layers
+        .iter()
+        .find(|layer| layer.id == "splash-media")
+        .unwrap();
+    assert_eq!(layer.layer_type, "image");
+    assert_eq!(layer.extra["fit"], "contain");
+    assert_eq!(layer.extra["align"], "right");
+    assert_eq!(layer.extra["valign"], "bottom");
+    assert_eq!((layer.width, layer.height), (960, 376));
+    let _ = fs::remove_dir_all(temp);
+}
+
 fn request(method: &str, uri: &str, value: Value) -> Request<Body> {
     let mut builder = Request::builder().method(method).uri(uri);
     if !value.is_null() {

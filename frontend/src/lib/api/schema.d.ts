@@ -271,7 +271,7 @@ export interface components {
             version: string;
         };
         /** @enum {string} */
-        WidgetKind: "text" | "value" | "bar" | "gauge" | "ring" | "badge" | "sparkline" | "image" | "animation";
+        WidgetKind: "text" | "value" | "bar" | "gauge" | "ring" | "badge" | "sparkline" | "image" | "animation" | "shooting_star";
     };
     responses: never;
     parameters: never;
