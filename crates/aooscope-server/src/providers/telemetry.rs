@@ -2,7 +2,11 @@ use super::http::HttpClient;
 use aooscope_config::AppPaths;
 use aooscope_types::{ProviderSecrets, Settings, StateDocument};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn storage_sort_key(disk: &Value) -> (String, String) {
     (
@@ -415,6 +419,39 @@ fn apply_host_storage_overlay(pve: &mut Value, paths: Option<&AppPaths>) {
     }
 }
 
+fn read_hwmon_temperatures(root: &Path) -> Vec<(String, String)> {
+    let mut values = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return values;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = fs::read_to_string(path.join("name"))
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        let key = if name.contains("amdgpu") || name.contains("radeon") {
+            Some("gpu")
+        } else if name.contains("k10temp")
+            || name.contains("coretemp")
+            || name.contains("zenpower")
+            || name.contains("cpu")
+            || name.contains("package")
+            || name.contains("x86_pkg_temp")
+        {
+            Some("cpu")
+        } else {
+            None
+        };
+        if let Some(key) = key
+            && let Ok(value) = fs::read_to_string(path.join("temp1_input"))
+        {
+            values.push((key.to_owned(), value));
+        }
+    }
+    values
+}
+
 fn local_sysfs() -> Value {
     let mut temperature_values = Vec::new();
     if let Ok(entries) = fs::read_dir("/sys/class/thermal") {
@@ -434,6 +471,15 @@ fn local_sysfs() -> Value {
                 && let Ok(value) = fs::read_to_string(path.join("temp"))
             {
                 temperature_values.push((key, value));
+            }
+        }
+    }
+    let has_cpu = temperature_values.iter().any(|(key, _)| *key == "cpu");
+    let has_gpu = temperature_values.iter().any(|(key, _)| *key == "gpu");
+    if !has_cpu || !has_gpu {
+        for (key, value) in read_hwmon_temperatures(Path::new("/sys/class/hwmon")) {
+            if (key == "cpu" && !has_cpu) || (key == "gpu" && !has_gpu) {
+                temperature_values.push((if key == "cpu" { "cpu" } else { "gpu" }, value));
             }
         }
     }
@@ -624,6 +670,7 @@ mod tests {
     use super::{
         apply_host_storage_overlay, disk_data_if_valid, normalize_local_sysfs, normalize_ollama,
         normalize_proxmox, proxmox_auth_values, proxmox_authorization, proxmox_ca_pem,
+        read_hwmon_temperatures,
     };
     use aooscope_config::AppPaths;
     use aooscope_types::ProviderSecrets;
@@ -765,6 +812,31 @@ mod tests {
         assert_eq!(value["smart"].as_array().unwrap().len(), 2);
         assert_eq!(value["smart"][0]["health"], "A-HEALTH");
         assert!(value["smart"][1]["health"].is_null());
+    }
+
+    #[test]
+    fn hwmon_fallback_recognizes_cpu_and_amd_gpu_temperatures() {
+        let root = std::env::temp_dir().join(format!("aooscope-hwmon-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("hwmon0")).unwrap();
+        fs::create_dir_all(root.join("hwmon1")).unwrap();
+        fs::write(root.join("hwmon0/name"), "k10temp\n").unwrap();
+        fs::write(root.join("hwmon0/temp1_input"), "86125\n").unwrap();
+        fs::write(root.join("hwmon1/name"), "amdgpu\n").unwrap();
+        fs::write(root.join("hwmon1/temp1_input"), "63000\n").unwrap();
+
+        let values = read_hwmon_temperatures(&root);
+        assert!(
+            values
+                .iter()
+                .any(|(key, value)| key == "cpu" && value.trim() == "86125")
+        );
+        assert!(
+            values
+                .iter()
+                .any(|(key, value)| key == "gpu" && value.trim() == "63000")
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
