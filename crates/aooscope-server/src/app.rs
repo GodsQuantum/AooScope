@@ -62,6 +62,10 @@ pub fn app(state: AppState) -> Router {
             post(routes::designer::create_orbit_preset),
         )
         .route(
+            "/api/media/presets/splash",
+            post(routes::designer::create_splash_preset),
+        )
+        .route(
             "/api/media/{id}",
             delete(routes::designer::delete_media).put(routes::designer::replace_media),
         )

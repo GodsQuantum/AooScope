@@ -15,6 +15,7 @@ pub const ALLOWED_LAYER_TYPES: &[&str] = &[
     "image",
     "sparkline",
     "animation",
+    "shooting_star",
 ];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]

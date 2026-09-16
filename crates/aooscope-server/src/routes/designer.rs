@@ -4,7 +4,7 @@ use aooscope_types::{MediaAsset, MediaPreset, Page, PageBackground, validate_doc
 use axum::{
     Json,
     body::{Body, Bytes},
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     http::{StatusCode, header},
     response::Response,
 };
@@ -19,6 +19,21 @@ type RouteError = (StatusCode, Json<Value>);
 pub struct OrbitPresetRequest {
     source_asset_id: String,
     display_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SplashPresetRequest {
+    source_asset_id: String,
+    display_name: Option<String>,
+    fit: Option<String>,
+    align: Option<String>,
+    valign: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct DeleteMediaQuery {
+    #[serde(default)]
+    detach: bool,
 }
 
 fn error(status: StatusCode, message: &str) -> RouteError {
@@ -403,6 +418,39 @@ pub async fn create_orbit_preset(
     Ok(Json(preset))
 }
 
+pub async fn create_splash_preset(
+    State(state): State<crate::state::AppState>,
+    Json(body): Json<SplashPresetRequest>,
+) -> Result<Json<MediaPreset>, RouteError> {
+    let store = MediaStore::new(&state.paths.root).map_err(media_error)?;
+    let asset = store.get(&body.source_asset_id).map_err(media_error)?;
+    let fit = body.fit.as_deref().unwrap_or("contain");
+    let align = body.align.as_deref().unwrap_or("center");
+    let valign = body.valign.as_deref().unwrap_or("center");
+    let preset = store
+        .ensure_splash(
+            &body.source_asset_id,
+            body.display_name.as_deref(),
+            fit,
+            align,
+            valign,
+        )
+        .map_err(media_error)?;
+    let mut pages = load_pages(&state.paths).map_err(config_error)?;
+    let aspect_ratio =
+        f64::from(asset.width.unwrap_or(1)) / f64::from(asset.height.unwrap_or(1).max(1));
+    if MediaStore::migrate_splash_media(
+        &mut pages,
+        &preset,
+        asset.format.eq_ignore_ascii_case("GIF"),
+        aspect_ratio,
+    ) {
+        pages.revision += 1;
+        atomic_write_json(&state.paths.pages(), &pages).map_err(config_error)?;
+    }
+    Ok(Json(preset))
+}
+
 pub async fn upload_media(
     State(state): State<crate::state::AppState>,
     mut form: Multipart,
@@ -429,10 +477,35 @@ pub async fn replace_media(
 pub async fn delete_media(
     State(state): State<crate::state::AppState>,
     Path(id): Path<String>,
+    Query(query): Query<DeleteMediaQuery>,
 ) -> Result<StatusCode, RouteError> {
-    let pages = load_pages(&state.paths).map_err(config_error)?;
-    MediaStore::new(&state.paths.root)
-        .and_then(|store| store.delete(&id, &pages))
+    let original_pages = load_pages(&state.paths).map_err(config_error)?;
+    let store = MediaStore::new(&state.paths.root).map_err(media_error)?;
+    let usage = store.usage(&id, &original_pages).map_err(media_error)?;
+    if !usage.is_empty() && !query.detach {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({"ok":false,"error":"media asset is in use","usage":usage})),
+        ));
+    }
+    if query.detach {
+        let mut pages = original_pages.clone();
+        let changed = MediaStore::detach_pages(&mut pages, &id);
+        if !changed.is_empty() {
+            validate_document(&pages)
+                .map_err(|issues| error(StatusCode::UNPROCESSABLE_ENTITY, &issues.join("; ")))?;
+            atomic_write_json(&state.paths.pages(), &pages).map_err(config_error)?;
+        }
+        if let Err(failure) = store.force_delete(&id) {
+            if !changed.is_empty() {
+                let _ = atomic_write_json(&state.paths.pages(), &original_pages);
+            }
+            return Err(media_error(failure));
+        }
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    store
+        .delete(&id, &original_pages)
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(media_error)
 }

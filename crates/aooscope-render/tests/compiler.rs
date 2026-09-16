@@ -459,6 +459,87 @@ fn transparent_animation_pixels_keep_the_page_background() {
     assert_eq!(image.get_pixel(10, 10).0, [17, 34, 51]);
 }
 
+#[test]
+fn image_fit_modes_preserve_aspect_and_anchor() {
+    let root = temp_root("image-fit");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let mut source = RgbaImage::from_pixel(4, 2, Rgba([255, 0, 0, 255]));
+    for x in 2..4 {
+        for y in 0..2 {
+            source.put_pixel(x, y, Rgba([0, 0, 255, 255]));
+        }
+    }
+    let mut bytes = Vec::new();
+    PngEncoder::new(&mut bytes)
+        .write_image(&source, 4, 2, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    let asset = media.ingest(&bytes, "wide.png").unwrap();
+    let make = |fit: &str, align: &str| -> Page {
+        serde_json::from_value(json!({
+        "id":"image-fit","name":"Image fit","enabled":true,"duration":8,"revision":1,"background":{"color":"#071019"},
+        "layers":[{"id":"image","type":"image","asset_id":asset.id,"fit":fit,"align":align,"valign":"center","x":10,"y":10,"width":4,"height":4,"z":1}]
+    })).unwrap()
+    };
+    let contain = compile_page(
+        &make("contain", "center"),
+        &StateDocument::default(),
+        &media,
+        100,
+        0.0,
+    )
+    .unwrap()
+    .image;
+    assert_eq!(contain.get_pixel(10, 10).0, [7, 16, 25]);
+    assert_ne!(contain.get_pixel(10, 11).0, [7, 16, 25]);
+    let cover_left = compile_page(
+        &make("cover", "left"),
+        &StateDocument::default(),
+        &media,
+        100,
+        0.0,
+    )
+    .unwrap()
+    .image;
+    assert!(cover_left.get_pixel(10, 10).0[0] > cover_left.get_pixel(10, 10).0[2]);
+    assert!(cover_left.get_pixel(13, 10).0[0] > cover_left.get_pixel(13, 10).0[2]);
+    let stretch = compile_page(
+        &make("stretch", "center"),
+        &StateDocument::default(),
+        &media,
+        100,
+        0.0,
+    )
+    .unwrap()
+    .image;
+    assert_ne!(stretch.as_raw(), contain.as_raw());
+}
+
+#[test]
+fn shooting_star_is_a_procedural_animated_layer() {
+    let root = temp_root("shooting-star");
+    let media = aooscope_render::MediaStore::new(&root).unwrap();
+    let page: Page = serde_json::from_value(json!({
+        "id":"star","name":"Star","enabled":true,"duration":8,"revision":1,"background":{"color":"#071019"},
+        "layers":[{"id":"star","type":"shooting_star","x":40,"y":40,"width":400,"height":140,"z":3,"color":"#ffffff","trail_length":90,"size":5,"angle_deg":-18}]
+    })).unwrap();
+    aooscope_types::validate_document(&PagesDocument {
+        schema_version: 1,
+        revision: 1,
+        carousel: vec!["star".into()],
+        pages: [("star".into(), page.clone())].into_iter().collect(),
+        extra: Default::default(),
+    })
+    .unwrap();
+    let a = compile_page(&page, &StateDocument::default(), &media, 100, 10.0)
+        .unwrap()
+        .image;
+    let b = compile_page(&page, &StateDocument::default(), &media, 100, 60.0)
+        .unwrap()
+        .image;
+    assert_ne!(a.as_raw(), b.as_raw());
+    assert!(a.pixels().any(|pixel| pixel.0[0] > 100));
+}
+
 fn temp_root(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("aooscope-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);

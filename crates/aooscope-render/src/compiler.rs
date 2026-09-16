@@ -299,6 +299,7 @@ pub fn compile_page(
                     warnings.push(format!("{}: animation asset unavailable", layer.id));
                 }
             }
+            "shooting_star" => draw_shooting_star(&mut image, layer, phase, c),
             "bar" | "gauge" | "ring" => {
                 let track = opacity(
                     color(
@@ -503,6 +504,146 @@ fn color_value(layer: &Layer, key: &str, fallback: Rgb<u8>) -> Rgb<u8> {
 fn crate_color(value: &str) -> Rgb<u8> {
     color(Some(value), Rgb([53, 217, 255]))
 }
+
+fn layer_media_layout(layer: &Layer) -> (&str, &str, &str) {
+    (
+        layer
+            .extra
+            .get("fit")
+            .and_then(Value::as_str)
+            .unwrap_or("contain"),
+        layer
+            .extra
+            .get("align")
+            .and_then(Value::as_str)
+            .unwrap_or("center"),
+        layer
+            .extra
+            .get("valign")
+            .and_then(Value::as_str)
+            .unwrap_or("center"),
+    )
+}
+
+fn anchor_offset(space: u32, anchor: &str) -> u32 {
+    match anchor {
+        "right" | "bottom" => space,
+        "center" => space / 2,
+        _ => 0,
+    }
+}
+
+fn fit_rgba_to_box(
+    source: &RgbaImage,
+    width: u32,
+    height: u32,
+    fit: &str,
+    align: &str,
+    valign: &str,
+) -> RgbaImage {
+    let width = width.max(1);
+    let height = height.max(1);
+    if fit == "stretch" {
+        return imageops::resize(source, width, height, imageops::FilterType::Lanczos3);
+    }
+    let source_w = source.width().max(1);
+    let source_h = source.height().max(1);
+    let scale = if fit == "cover" {
+        (width as f64 / source_w as f64).max(height as f64 / source_h as f64)
+    } else {
+        (width as f64 / source_w as f64).min(height as f64 / source_h as f64)
+    };
+    let resized_w = ((source_w as f64 * scale).round() as u32).max(1);
+    let resized_h = ((source_h as f64 * scale).round() as u32).max(1);
+    let resized = imageops::resize(source, resized_w, resized_h, imageops::FilterType::Lanczos3);
+    if fit == "cover" {
+        let crop_x = anchor_offset(resized_w.saturating_sub(width), align);
+        let crop_y = anchor_offset(resized_h.saturating_sub(height), valign);
+        return imageops::crop_imm(
+            &resized,
+            crop_x,
+            crop_y,
+            width.min(resized_w),
+            height.min(resized_h),
+        )
+        .to_image();
+    }
+    let mut canvas = RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 0]));
+    let x = anchor_offset(width.saturating_sub(resized_w), align);
+    let y = anchor_offset(height.saturating_sub(resized_h), valign);
+    imageops::overlay(&mut canvas, &resized, i64::from(x), i64::from(y));
+    canvas
+}
+
+fn blend_rgb_pixel(image: &mut RgbImage, x: i32, y: i32, source: Rgb<u8>, alpha: f64) {
+    if x < 0 || y < 0 || x >= WIDTH as i32 || y >= HEIGHT as i32 {
+        return;
+    }
+    let alpha = alpha.clamp(0.0, 1.0);
+    let target = image.get_pixel_mut(x as u32, y as u32);
+    for channel in 0..3 {
+        target[channel] = ((source[channel] as f64 * alpha)
+            + (target[channel] as f64 * (1.0 - alpha)))
+            .round() as u8;
+    }
+}
+
+fn draw_shooting_star(image: &mut RgbImage, layer: &Layer, phase: f64, color: Rgb<u8>) {
+    let angle = layer
+        .extra
+        .get("angle_deg")
+        .and_then(Value::as_f64)
+        .unwrap_or(-18.0)
+        .to_radians();
+    let trail = layer
+        .extra
+        .get("trail_length")
+        .and_then(Value::as_u64)
+        .unwrap_or(90)
+        .clamp(8, 400) as usize;
+    let size = layer
+        .extra
+        .get("size")
+        .and_then(Value::as_u64)
+        .unwrap_or(5)
+        .clamp(1, 20) as i32;
+    let dx = angle.cos();
+    let dy = angle.sin();
+    let t = phase.rem_euclid(100.0) / 100.0;
+    let head_x = layer.x as f64 + t * layer.width.saturating_sub(1) as f64;
+    let center_x = layer.x as f64 + layer.width as f64 / 2.0;
+    let center_y = layer.y as f64 + layer.height as f64 / 2.0;
+    let head_y = (center_y + (head_x - center_x) * angle.tan() * 0.35).clamp(
+        layer.y as f64,
+        (layer.y + layer.height.saturating_sub(1) as i32) as f64,
+    );
+    for i in (0..trail).rev() {
+        let fade = 1.0 - i as f64 / trail as f64;
+        let x = (head_x - dx * i as f64).round() as i32;
+        let y = (head_y - dy * i as f64).round() as i32;
+        if x >= layer.x
+            && y >= layer.y
+            && x < layer.x + layer.width as i32
+            && y < layer.y + layer.height as i32
+        {
+            blend_rgb_pixel(image, x, y, color, fade * 0.85);
+        }
+    }
+    let hx = head_x.round() as i32;
+    let hy = head_y.round() as i32;
+    for yy in -size..=size {
+        for xx in -size..=size {
+            if xx * xx + yy * yy <= size * size
+                && hx + xx >= layer.x
+                && hy + yy >= layer.y
+                && hx + xx < layer.x + layer.width as i32
+                && hy + yy < layer.y + layer.height as i32
+            {
+                blend_rgb_pixel(image, hx + xx, hy + yy, color, 1.0);
+            }
+        }
+    }
+}
 const MAX_ANIMATION_FRAMES: usize = 120;
 const MAX_ANIMATION_PIXELS: u64 = 24_000_000;
 
@@ -513,6 +654,9 @@ struct AnimationCache {
     len: u64,
     width: u32,
     height: u32,
+    fit: String,
+    align: String,
+    valign: String,
     frames: Vec<RgbaImage>,
 }
 
@@ -527,8 +671,9 @@ fn draw_animation_asset(
     (luminance, opacity): (f64, f64),
     warnings: &mut Vec<String>,
 ) {
+    let (fit, align, valign) = layer_media_layout(layer);
     let result = media.resolve(id).and_then(|path| {
-        animation_frame(&path, layer.width, layer.height, phase)
+        animation_frame(&path, layer.width, layer.height, fit, align, valign, phase)
             .map_err(|error| crate::MediaError::Image(error.to_string()))
     });
     match result {
@@ -537,7 +682,15 @@ fn draw_animation_asset(
     }
 }
 
-fn animation_frame(path: &Path, width: u32, height: u32, phase: f64) -> Result<RgbaImage, String> {
+fn animation_frame(
+    path: &Path,
+    width: u32,
+    height: u32,
+    fit: &str,
+    align: &str,
+    valign: &str,
+    phase: f64,
+) -> Result<RgbaImage, String> {
     let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
     let modified = metadata.modified().ok();
     let cache = ANIMATION_CACHE.get_or_init(|| Mutex::new(None));
@@ -551,13 +704,16 @@ fn animation_frame(path: &Path, width: u32, height: u32, phase: f64) -> Result<R
                 && entry.len == metadata.len()
                 && entry.width == width
                 && entry.height == height
+                && entry.fit == fit
+                && entry.align == align
+                && entry.valign == valign
         }) {
             let index = animation_index(phase, hit.frames.len());
             return Ok(hit.frames[index].clone());
         }
     }
 
-    let frames = decode_animation_frames(path, width, height)?;
+    let frames = decode_animation_frames(path, width, height, fit, align, valign)?;
     let index = animation_index(phase, frames.len());
     let selected = frames[index].clone();
     let mut guard = cache
@@ -569,6 +725,9 @@ fn animation_frame(path: &Path, width: u32, height: u32, phase: f64) -> Result<R
         len: metadata.len(),
         width,
         height,
+        fit: fit.to_owned(),
+        align: align.to_owned(),
+        valign: valign.to_owned(),
         frames,
     });
     Ok(selected)
@@ -582,7 +741,14 @@ fn animation_index(phase: f64, frames: usize) -> usize {
     ((normalized * frames as f64).floor() as usize).min(frames - 1)
 }
 
-fn decode_animation_frames(path: &Path, width: u32, height: u32) -> Result<Vec<RgbaImage>, String> {
+fn decode_animation_frames(
+    path: &Path,
+    width: u32,
+    height: u32,
+    fit: &str,
+    align: &str,
+    valign: &str,
+) -> Result<Vec<RgbaImage>, String> {
     if path
         .extension()
         .and_then(|value| value.to_str())
@@ -596,12 +762,8 @@ fn decode_animation_frames(path: &Path, width: u32, height: u32) -> Result<Vec<R
         let mut pixels = 0_u64;
         for frame in decoder.into_frames().take(MAX_ANIMATION_FRAMES) {
             let frame = frame.map_err(|error| error.to_string())?;
-            let resized = imageops::resize(
-                &frame.into_buffer(),
-                width,
-                height,
-                imageops::FilterType::Lanczos3,
-            );
+            let buffer = frame.into_buffer();
+            let resized = fit_rgba_to_box(&buffer, width, height, fit, align, valign);
             pixels =
                 pixels.saturating_add(u64::from(resized.width()) * u64::from(resized.height()));
             if pixels > MAX_ANIMATION_PIXELS && !frames.is_empty() {
@@ -616,11 +778,8 @@ fn decode_animation_frames(path: &Path, width: u32, height: u32) -> Result<Vec<R
     let source = image::open(path)
         .map_err(|error| error.to_string())?
         .to_rgba8();
-    Ok(vec![imageops::resize(
-        &source,
-        width,
-        height,
-        imageops::FilterType::Lanczos3,
+    Ok(vec![fit_rgba_to_box(
+        &source, width, height, fit, align, valign,
     )])
 }
 
@@ -639,12 +798,8 @@ fn draw_asset_id(
     {
         Ok(source) => {
             let source = source.to_rgba8();
-            let fitted = imageops::resize(
-                &source,
-                layer.width,
-                layer.height,
-                imageops::FilterType::Lanczos3,
-            );
+            let (fit, align, valign) = layer_media_layout(layer);
+            let fitted = fit_rgba_to_box(&source, layer.width, layer.height, fit, align, valign);
             composite_rgba(image, &fitted, layer.x, layer.y, luminance, opacity);
         }
         Err(e) => warnings.push(format!("{}: media unavailable: {}", layer.id, e)),
