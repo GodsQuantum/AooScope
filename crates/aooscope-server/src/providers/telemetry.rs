@@ -24,6 +24,67 @@ fn storage_sort_key(disk: &Value) -> (String, String) {
     )
 }
 
+fn temperature_number(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| {
+            value
+                .as_str()
+                .and_then(|raw| raw.trim().parse::<f64>().ok())
+        })
+        .or_else(|| value.get("current").and_then(temperature_number))
+}
+
+fn smart_raw_temperature(value: &Value) -> Option<f64> {
+    temperature_number(value).or_else(|| {
+        value.as_str().and_then(|raw| {
+            raw.split_whitespace().next().and_then(|part| {
+                part.trim_matches(|ch: char| !ch.is_ascii_digit() && ch != '.' && ch != '-')
+                    .parse::<f64>()
+                    .ok()
+            })
+        })
+    })
+}
+
+fn smart_temperature_c(smart: &Value) -> Option<f64> {
+    for key in ["temperature", "temperature_c"] {
+        if let Some(value) = smart.get(key).and_then(temperature_number) {
+            return Some(value);
+        }
+    }
+
+    if let Some(attributes) = smart.get("attributes").and_then(Value::as_array) {
+        for wanted in ["194", "190"] {
+            if let Some(value) = attributes.iter().find_map(|attribute| {
+                let id = attribute.get("id").and_then(|value| {
+                    value
+                        .as_str()
+                        .map(str::trim)
+                        .map(str::to_owned)
+                        .or_else(|| value.as_u64().map(|id| id.to_string()))
+                })?;
+                (id == wanted)
+                    .then(|| attribute.get("raw"))
+                    .flatten()
+                    .and_then(smart_raw_temperature)
+            }) {
+                return Some(value);
+            }
+        }
+    }
+
+    smart.get("text").and_then(Value::as_str).and_then(|text| {
+        text.lines().find_map(|line| {
+            let (label, value) = line.split_once(':')?;
+            (label.trim().eq_ignore_ascii_case("Temperature"))
+                .then(|| value.split_whitespace().next())
+                .flatten()
+                .and_then(|value| value.parse::<f64>().ok())
+        })
+    })
+}
+
 pub fn normalize_proxmox(value: &Value) -> Value {
     let status = value.get("status").unwrap_or(value);
     let memory = status.get("memory").unwrap_or(&Value::Null);
@@ -103,7 +164,7 @@ pub fn normalize_proxmox(value: &Value) -> Value {
         }).collect::<Vec<_>>(),
         "smart": storage.iter().map(|(_, disk)| json!({
             "health": disk.get("health"),
-            "temperature_c": disk.get("temperature").or_else(|| disk.get("temperature_c"))
+            "temperature_c": smart_temperature_c(disk)
         })).collect::<Vec<_>>()
     })
 }
@@ -670,7 +731,7 @@ mod tests {
     use super::{
         apply_host_storage_overlay, disk_data_if_valid, normalize_local_sysfs, normalize_ollama,
         normalize_proxmox, proxmox_auth_values, proxmox_authorization, proxmox_ca_pem,
-        read_hwmon_temperatures,
+        read_hwmon_temperatures, smart_temperature_c,
     };
     use aooscope_config::AppPaths;
     use aooscope_types::ProviderSecrets;
@@ -764,6 +825,38 @@ mod tests {
     }
 
     #[test]
+    fn smart_temperature_prefers_explicit_value_then_ata_194_then_190() {
+        assert_eq!(smart_temperature_c(&json!({"temperature": 37})), Some(37.0));
+        assert_eq!(
+            smart_temperature_c(&json!({"temperature_c": 38})),
+            Some(38.0)
+        );
+        assert_eq!(
+            smart_temperature_c(&json!({"attributes": [
+                {"id":"190","raw":"44 (Min/Max 30/60)"},
+                {"id":"194","raw":"41 (0 13 0 0 0)"}
+            ]})),
+            Some(41.0)
+        );
+        assert_eq!(
+            smart_temperature_c(&json!({"attributes": [
+                {"id":" 190","raw":"43 (Min/Max 31/62)"}
+            ]})),
+            Some(43.0)
+        );
+    }
+
+    #[test]
+    fn smart_temperature_parses_proxmox_nvme_text() {
+        let smart = json!({
+            "health":"PASSED",
+            "type":"text",
+            "text":"SMART/Health Information\nTemperature:                        49 Celsius\nTemperature Sensor 1:               49 Celsius\n"
+        });
+        assert_eq!(smart_temperature_c(&smart), Some(49.0));
+    }
+
+    #[test]
     fn proxmox_normalization_preserves_smart_slots_when_a_request_failed() {
         let value = normalize_proxmox(&json!({
             "disks": [
@@ -778,9 +871,9 @@ mod tests {
             ]
         }));
         assert_eq!(value["smart"].as_array().unwrap().len(), 3);
-        assert_eq!(value["smart"][0]["temperature_c"], 31);
+        assert_eq!(value["smart"][0]["temperature_c"].as_f64(), Some(31.0));
         assert!(value["smart"][1]["health"].is_null());
-        assert_eq!(value["smart"][2]["temperature_c"], 33);
+        assert_eq!(value["smart"][2]["temperature_c"].as_f64(), Some(33.0));
     }
 
     #[test]

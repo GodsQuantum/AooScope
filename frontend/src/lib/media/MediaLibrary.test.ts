@@ -12,6 +12,12 @@ describe('MediaLibrary', () => {
     expect(screen.getByText('▶')).toBeTruthy();
   });
 
+  it('shows the actual splash source as a compact preset preview', () => {
+    render(MediaLibrary, { props: { ...props, assets: [{ id: 'logo', name: 'Cloud logo', kind: 'image' }], presets: [{ id: 'orbit', name: 'Demo server · Orbit', source_asset_id: 'logo', settings: { fps: 8, speed_seconds: 4 } }] } });
+    expect((screen.getByRole('img', { name: 'Preview Demo server · Orbit' }) as HTMLImageElement).src).toContain('/api/media/logo/file');
+    expect(screen.queryByLabelText('Poster unavailable')).toBeNull();
+  });
+
   it('uses generic splash wording while keeping the compatibility callback', async () => {
     const onorbit = vi.fn();
     render(MediaLibrary, { props: { onorbit, onpreview: () => {}, assets: [{ id: 'logo', name: 'Logo', kind: 'image' }] } });
