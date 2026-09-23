@@ -730,7 +730,7 @@ mod tests {
         );
         assert_eq!(
             DisplayScheduler::default().refresh_interval(false),
-            Duration::from_secs(1)
+            Duration::from_secs(5)
         );
         let _ = fs::remove_dir_all(root);
     }

@@ -48,7 +48,7 @@ fn scheduler_promotes_only_revisions_and_clamps_animation_fps() {
     assert_eq!(scheduler.current_revision(), None);
     scheduler.promote(PromotedRevision::new("r1"));
     assert_eq!(scheduler.current_revision().unwrap().id, "r1");
-    assert_eq!(scheduler.refresh_interval(false), Duration::from_secs(1));
+    assert_eq!(scheduler.refresh_interval(false), Duration::from_secs(5));
     assert_eq!(scheduler.animation_schedule(99), AnimationSchedule::new(8));
     assert_eq!(scheduler.animation_schedule(0), AnimationSchedule::new(5));
 }

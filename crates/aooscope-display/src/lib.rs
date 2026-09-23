@@ -18,6 +18,7 @@ pub use simulated::SimulatedDisplayDriver;
 pub const DISPLAY_SIZE: (u32, u32) = (960, 376);
 pub const DEFAULT_ANIMATION_FPS: u32 = 5;
 pub const MAX_ANIMATION_FPS: u32 = 8;
+pub const STATIC_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DisplayCapabilities {
@@ -199,7 +200,7 @@ impl DisplayScheduler {
         if animation {
             AnimationSchedule::new(DEFAULT_ANIMATION_FPS).interval
         } else {
-            Duration::from_secs(1)
+            STATIC_REFRESH_INTERVAL
         }
     }
     pub fn animation_schedule(&self, requested_fps: u32) -> AnimationSchedule {
@@ -227,7 +228,7 @@ impl DisplayScheduler {
         let mut ticker = tokio::time::interval(
             animated
                 .map(|fps| self.animation_schedule(fps).interval)
-                .unwrap_or(Duration::from_secs(1)),
+                .unwrap_or(STATIC_REFRESH_INTERVAL),
         );
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -240,7 +241,7 @@ impl DisplayScheduler {
                         .or_else(|| animation.then_some(requested_fps));
                     ticker = tokio::time::interval(animated
                         .map(|fps| self.animation_schedule(fps).interval)
-                        .unwrap_or(Duration::from_secs(1)));
+                        .unwrap_or(STATIC_REFRESH_INTERVAL));
                     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 }
                 _ = ticker.tick() => {
