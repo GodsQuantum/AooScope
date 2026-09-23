@@ -6,6 +6,8 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
+    time::{Duration, Instant},
 };
 
 fn storage_sort_key(disk: &Value) -> (String, String) {
@@ -303,6 +305,26 @@ fn disk_data_if_valid(value: &Value) -> Option<Vec<Value>> {
     value.get("data").and_then(Value::as_array).cloned()
 }
 
+#[derive(Default)]
+struct ProxmoxStorageCache {
+    source: String,
+    refreshed_at: Option<Instant>,
+    disks: Vec<Value>,
+    smart: BTreeMap<String, Value>,
+}
+
+static PROXMOX_STORAGE_CACHE: OnceLock<tokio::sync::Mutex<ProxmoxStorageCache>> = OnceLock::new();
+
+fn proxmox_storage_poll_interval() -> Duration {
+    let seconds = std::env::var("AOOSCOPE_STORAGE_POLL_SECONDS")
+        .or_else(|_| std::env::var("AOOSCOPE_SMART_POLL_SECONDS"))
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(3600)
+        .clamp(60, 86400);
+    Duration::from_secs(seconds)
+}
+
 async fn collect_proxmox(
     settings: &Settings,
     secrets: &ProviderSecrets,
@@ -348,26 +370,6 @@ async fn collect_proxmox(
         )
         .await
         .unwrap_or(json!([]));
-    let disks_result = client
-        .get_json(
-            &config.url,
-            &format!("/api2/json/nodes/{node}/disks/list?skipsmart=1"),
-            &headers,
-        )
-        .await;
-    let (disk_data, mut storage_fresh) = match disks_result {
-        Ok(disks) => match disk_data_if_valid(&disks) {
-            Some(data) => (data, true),
-            None => {
-                tracing::warn!("proxmox disk inventory returned an invalid payload");
-                (Vec::new(), false)
-            }
-        },
-        Err(error) => {
-            tracing::warn!(%error, "proxmox disk inventory temporarily unavailable");
-            (Vec::new(), false)
-        }
-    };
     let mut guests = qemu
         .get("data")
         .and_then(Value::as_array)
@@ -379,29 +381,93 @@ async fn collect_proxmox(
             .cloned()
             .unwrap_or_default(),
     );
-    let mut smart = Vec::with_capacity(disk_data.len());
-    for disk in &disk_data {
-        let (value, fresh) = if let Some(devpath) = disk.get("devpath").and_then(Value::as_str) {
-            match client
-                .get_json(
-                    &config.url,
-                    &format!("/api2/json/nodes/{node}/disks/smart?disk={devpath}"),
-                    &headers,
-                )
-                .await
-            {
-                Ok(value) => (value.get("data").cloned().unwrap_or(value), true),
-                Err(error) => {
-                    tracing::warn!(%error, %devpath, "proxmox SMART probe temporarily unavailable");
-                    (Value::Null, false)
-                }
-            }
-        } else {
-            (Value::Null, false)
-        };
-        storage_fresh &= fresh;
-        smart.push(value);
+
+    let storage_source = format!("{}|{node}", config.url);
+    let storage_ttl = proxmox_storage_poll_interval();
+    let storage_cache = PROXMOX_STORAGE_CACHE
+        .get_or_init(|| tokio::sync::Mutex::new(ProxmoxStorageCache::default()));
+    let mut cache = storage_cache.lock().await;
+    if cache.source != storage_source {
+        cache.source = storage_source;
+        cache.refreshed_at = None;
+        cache.disks.clear();
+        cache.smart.clear();
     }
+
+    let refresh_storage = cache
+        .refreshed_at
+        .map(|timestamp| timestamp.elapsed() >= storage_ttl)
+        .unwrap_or(true);
+    let mut storage_fresh = true;
+
+    if refresh_storage {
+        match client
+            .get_json(
+                &config.url,
+                &format!("/api2/json/nodes/{node}/disks/list?skipsmart=1"),
+                &headers,
+            )
+            .await
+        {
+            Ok(disks) => match disk_data_if_valid(&disks) {
+                Some(data) => {
+                    let mut refreshed_smart = cache.smart.clone();
+                    for disk in &data {
+                        let Some(devpath) = disk.get("devpath").and_then(Value::as_str) else {
+                            storage_fresh = false;
+                            continue;
+                        };
+                        match client
+                            .get_json(
+                                &config.url,
+                                &format!("/api2/json/nodes/{node}/disks/smart?disk={devpath}"),
+                                &headers,
+                            )
+                            .await
+                        {
+                            Ok(value) => {
+                                refreshed_smart.insert(
+                                    devpath.to_owned(),
+                                    value.get("data").cloned().unwrap_or(value),
+                                );
+                            }
+                            Err(error) => {
+                                storage_fresh = false;
+                                tracing::warn!(%error, %devpath, "proxmox SMART probe temporarily unavailable; keeping cached value");
+                            }
+                        }
+                    }
+                    cache.disks = data;
+                    cache.smart = refreshed_smart;
+                }
+                None => {
+                    storage_fresh = false;
+                    tracing::warn!(
+                        "proxmox disk inventory returned an invalid payload; keeping cached inventory"
+                    );
+                }
+            },
+            Err(error) => {
+                storage_fresh = false;
+                tracing::warn!(%error, "proxmox disk inventory temporarily unavailable; keeping cached inventory");
+            }
+        }
+        cache.refreshed_at = Some(Instant::now());
+    }
+
+    let disk_data = cache.disks.clone();
+    let smart = disk_data
+        .iter()
+        .map(|disk| {
+            disk.get("devpath")
+                .and_then(Value::as_str)
+                .and_then(|devpath| cache.smart.get(devpath))
+                .cloned()
+                .unwrap_or(Value::Null)
+        })
+        .collect::<Vec<_>>();
+    storage_fresh &= !disk_data.is_empty() && smart.iter().all(|value| !value.is_null());
+    drop(cache);
     let mut normalized = normalize_proxmox(
         &json!({"status": status.get("data").cloned().unwrap_or(status), "guests": guests, "disks": disk_data, "smart": smart}),
     );

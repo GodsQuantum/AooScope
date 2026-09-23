@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh AooScope host storage snapshot
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=1h
+AccuracySec=1min
+Unit=aooscope-host-storage.service
+
+[Install]
+WantedBy=timers.target

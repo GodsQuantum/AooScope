@@ -1,0 +1,9 @@
+[Unit]
+Description=AooScope host storage snapshot
+After=local-fs.target zfs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/aooscope-host-storage-snapshot
+Nice=10
+IOSchedulingClass=idle

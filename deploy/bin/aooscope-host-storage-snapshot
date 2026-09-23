@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+import argparse, json, os, re, stat, subprocess, tempfile
+from pathlib import Path
+
+PREFERRED_PREFIXES = ("/srv/disks/", "/srv/backup-local", "/srv/storage/")
+
+def run(*args):
+    return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE).stdout
+
+def walk(node):
+    yield node
+    for child in node.get("children") or []:
+        yield from walk(child)
+
+def humanize(value):
+    return re.sub(r"[-_]+", " ", value).strip().upper()
+
+def fs_usage(path):
+    st = os.statvfs(path)
+    total = st.f_blocks * st.f_frsize
+    avail = st.f_bavail * st.f_frsize
+    used = max(0, total - st.f_bfree * st.f_frsize)
+    pct = used * 100.0 / total if total else 0.0
+    return total, used, avail, pct
+
+def preferred_mount(nodes):
+    mounts = []
+    for node in nodes:
+        for mp in node.get("mountpoints") or []:
+            if mp and any(mp == p or mp.startswith(p) for p in PREFERRED_PREFIXES):
+                mounts.append((0 if mp.startswith("/srv/disks/") else 1, mp, node))
+    return min(mounts, default=None, key=lambda item: (item[0], len(item[1]), item[1]))
+
+def zpool_stats():
+    pools = {}
+    try:
+        for line in run("zpool", "list", "-Hp", "-o", "name,size,alloc,free,cap").splitlines():
+            name, size, alloc, free, cap = line.split("\t")
+            pools[name] = (int(size), int(alloc), int(free), float(cap.rstrip("%")))
+    except Exception:
+        pass
+    return pools
+
+def unique_pool_disk(pool):
+    try:
+        paths = []
+        for line in run("zpool", "status", "-P", pool).splitlines():
+            fields = line.split()
+            if fields and fields[0].startswith("/dev/"):
+                real = os.path.realpath(fields[0])
+                pk = subprocess.run(["lsblk", "-ndo", "PKNAME", real], text=True, stdout=subprocess.PIPE).stdout.strip()
+                paths.append("/dev/" + pk if pk else real)
+        uniq = sorted(set(paths))
+        return uniq[0] if len(uniq) == 1 else None
+    except Exception:
+        return None
+
+def build():
+    tree = json.loads(run("lsblk", "-Jb", "-o", "NAME,PATH,PKNAME,TYPE,SIZE,FSTYPE,LABEL,MOUNTPOINTS,MODEL"))
+    pools = zpool_stats()
+    pool_to_disk = {pool: unique_pool_disk(pool) for pool in pools}
+    devices = []
+    for disk in tree.get("blockdevices", []):
+        if disk.get("type") != "disk" or not disk.get("path") or int(disk.get("size") or 0) <= 0:
+            continue
+        nodes = list(walk(disk))
+        entry = {"devpath": disk["path"]}
+        mount = preferred_mount(nodes)
+        if mount:
+            _, mp, node = mount
+            total, used, avail, pct = fs_usage(mp)
+            label = node.get("label") or Path(mp).name
+            entry.update(display_name=humanize(Path(mp).name), filesystem_label=label,
+                         mountpoint=mp, size=total, used=used, avail=avail, usage_pct=pct)
+        else:
+            pool = next((name for name, dev in pool_to_disk.items() if dev == disk["path"]), None)
+            if pool:
+                _pool_size, used, _pool_free, _pool_pct = pools[pool]
+                physical_size = int(disk.get("size") or 0)
+                avail = max(0, physical_size - used)
+                pct = used * 100.0 / physical_size if physical_size else 0.0
+                entry.update(display_name=humanize(pool), filesystem_label=pool,
+                             size=physical_size, used=used, avail=avail, usage_pct=pct)
+        if len(entry) > 1:
+            devices.append(entry)
+    return {"schema_version": 1, "devices": devices}
+
+def atomic_write(path, data):
+    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
+    owner = path.parent.stat()
+    fd, tmp = tempfile.mkstemp(prefix=".host-storage.", suffix=".json", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2, sort_keys=True); f.write("\n"); f.flush(); os.fsync(f.fileno())
+        os.chown(tmp, owner.st_uid, owner.st_gid)
+        os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(tmp, path)
+    finally:
+        try: os.unlink(tmp)
+        except FileNotFoundError: pass
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--output", default="/srv/lxc/administration/appdata/aooscope/private/host-storage.json")
+    args = ap.parse_args()
+    data = build(); atomic_write(args.output, data); print(json.dumps(data, indent=2))
