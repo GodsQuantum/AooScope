@@ -101,6 +101,6 @@ def atomic_write(path, data):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--output", default="/srv/lxc/administration/appdata/aooscope/private/host-storage.json")
+    ap.add_argument("--output", default=os.environ.get("AOOSCOPE_HOST_STORAGE_OUTPUT", "/var/lib/aooscope/host-storage.json"))
     args = ap.parse_args()
     data = build(); atomic_write(args.output, data); print(json.dumps(data, indent=2))

@@ -1,6 +1,6 @@
 # Host deployment helpers
 
-These files mirror the Cloud9 host-side AooScope storage overlay deployment.
+These files are generic host-side AooScope storage overlay deployment examples.
 
 ## Storage polling policy
 
