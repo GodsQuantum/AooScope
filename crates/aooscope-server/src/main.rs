@@ -24,6 +24,15 @@ fn device_path(configured: Option<OsString>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/dev/ttyACM0"))
 }
 
+fn poll_interval(name: &str, default_seconds: u64) -> Duration {
+    let seconds = env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default_seconds)
+        .clamp(5, 300);
+    Duration::from_secs(seconds)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if env::args().nth(1).as_deref() == Some("health") {
@@ -51,8 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     state.display.power_on().await?;
     let display_runtime = state.start_display_runtime();
-    let _media_poller = state.spawn_media_polling(std::time::Duration::from_secs(5));
-    let _telemetry_poller = state.spawn_telemetry_polling(std::time::Duration::from_secs(5));
+    let _media_poller = state.spawn_media_polling(poll_interval("AOOSCOPE_MEDIA_POLL_SECONDS", 5));
+    let _telemetry_poller =
+        state.spawn_telemetry_polling(poll_interval("AOOSCOPE_TELEMETRY_POLL_SECONDS", 5));
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, "AooScope server listening");
     axum::serve(listener, app(state.clone()))
